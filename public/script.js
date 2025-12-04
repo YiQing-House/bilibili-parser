@@ -830,29 +830,32 @@ async function downloadBatchItem(index) {
         listItem.classList.add('downloading');
     }
     
-    try {
-        if (format === 'audio') {
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=audio`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}.m4a`);
-        } else if (format === 'cover') {
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/download/cover?url=${encodedUrl}`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}.jpg`);
-        } else if (format === 'video-only') {
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=video`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}_video.m4s`);
-        } else if (format === 'video+audio-separate') {
-            // 分离下载：先视频后音频
-            const videoUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=video`;
-            triggerBrowserDownload(videoUrl, `${safeTitle}_video.m4s`);
-            // 延迟下载音频
-            await new Promise(resolve => setTimeout(resolve, 800));
-            const audioUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=audio`;
-            triggerBrowserDownload(audioUrl, `${safeTitle}_audio.m4a`);
-        } else {
-            // 合并下载
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${quality}`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}.mp4`);
-        }
+        const videoFormat = appState.videoFormat || 'mp4';
+        const audioFormat = appState.audioFormat || 'mp3';
+        
+        try {
+            if (format === 'audio') {
+                const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=audio`;
+                triggerBrowserDownload(downloadUrl, `${safeTitle}.${audioFormat}`);
+            } else if (format === 'cover') {
+                const downloadUrl = `${API_BASE_URL}/api/bilibili/download/cover?url=${encodedUrl}`;
+                triggerBrowserDownload(downloadUrl, `${safeTitle}.jpg`);
+            } else if (format === 'video-only') {
+                const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=video`;
+                triggerBrowserDownload(downloadUrl, `${safeTitle}_video.${videoFormat}`);
+            } else if (format === 'video+audio-separate') {
+                // 分离下载：先视频后音频
+                const videoUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=video`;
+                triggerBrowserDownload(videoUrl, `${safeTitle}_video.${videoFormat}`);
+                // 延迟下载音频
+                await new Promise(resolve => setTimeout(resolve, 800));
+                const audioUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=audio`;
+                triggerBrowserDownload(audioUrl, `${safeTitle}_audio.${audioFormat}`);
+            } else {
+                // 视音合体：使用选择的视频格式
+                const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${quality}&format=${videoFormat}`;
+                triggerBrowserDownload(downloadUrl, `${safeTitle}.${videoFormat}`);
+            }
         
         if (listItem) {
             listItem.classList.remove('downloading');
@@ -1023,27 +1026,30 @@ async function downloadAllBatch() {
         try {
             const safeTitle = formatFilename ? formatFilename(data, item.url) : (data.title || 'video').replace(/[<>:"/\\|?*]/g, '_');
             
-            // 根据预设格式下载（使用统一的 format 和 quality）
+            // 根据预设格式下载（使用统一的 format、quality、videoFormat、audioFormat）
+            const videoFormat = appState.videoFormat || 'mp4';
+            const audioFormat = appState.audioFormat || 'mp3';
+            
             if (format === 'audio') {
                 const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=audio`;
-                triggerBrowserDownload(downloadUrl, `${safeTitle}.m4a`);
+                triggerBrowserDownload(downloadUrl, `${safeTitle}.${audioFormat}`);
             } else if (format === 'cover') {
                 const downloadUrl = `${API_BASE_URL}/api/bilibili/download/cover?url=${encodedUrl}`;
                 triggerBrowserDownload(downloadUrl, `${safeTitle}.jpg`);
             } else if (format === 'video-only') {
                 const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=video`;
-                triggerBrowserDownload(downloadUrl, `${safeTitle}_video.m4s`);
+                triggerBrowserDownload(downloadUrl, `${safeTitle}_video.${videoFormat}`);
             } else if (format === 'video+audio-separate') {
                 // 分离下载
                 const videoUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=video`;
-                triggerBrowserDownload(videoUrl, `${safeTitle}_video.m4s`);
+                triggerBrowserDownload(videoUrl, `${safeTitle}_video.${videoFormat}`);
                 await new Promise(resolve => setTimeout(resolve, 800));
                 const audioUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=audio`;
-                triggerBrowserDownload(audioUrl, `${safeTitle}_audio.m4a`);
+                triggerBrowserDownload(audioUrl, `${safeTitle}_audio.${audioFormat}`);
             } else {
-                // 合并下载
-                const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${quality}`;
-                triggerBrowserDownload(downloadUrl, `${safeTitle}.mp4`);
+                // 视音合体：使用选择的视频格式
+                const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${quality}&format=${videoFormat}`;
+                triggerBrowserDownload(downloadUrl, `${safeTitle}.${videoFormat}`);
             }
             
             // 等待一小段时间确保下载开始
@@ -2120,30 +2126,35 @@ async function downloadSelected() {
             const downloadUrl = `${API_BASE_URL}/api/bilibili/download/cover?url=${encodedUrl}`;
             downloadFile(downloadUrl, `${safeTitle}.jpg`);
         } else if (selectedFormat === 'video+audio-separate') {
-            // 分离下载：先下载视频，再下载音频
+            // 分离下载：先下载视频，再下载音频 - 使用选择的格式
+            const videoFormat = appState.videoFormat || 'mp4';
+            const audioFormat = appState.audioFormat || 'mp3';
             showToast('开始分离下载，将依次下载视频和音频...', 'success');
             
             // 下载视频 - 使用流式代理
             const videoUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video`;
-            downloadFile(videoUrl_dl, `${safeTitle}_video.m4s`);
+            downloadFile(videoUrl_dl, `${safeTitle}_video.${videoFormat}`);
             
             // 延迟下载音频
             setTimeout(() => {
                 const audioUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio`;
-                downloadFile(audioUrl_dl, `${safeTitle}_audio.m4a`);
+                downloadFile(audioUrl_dl, `${safeTitle}_audio.${audioFormat}`);
             }, 1000);
         } else if (selectedFormat === 'audio') {
-            // 下载音频 - 使用流式代理
+            // 下载音频 - 使用选择的音频格式
+            const audioFormat = appState.audioFormat || 'mp3';
             const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio`;
-            downloadFile(downloadUrl, `${safeTitle}.m4a`);
+            downloadFile(downloadUrl, `${safeTitle}.${audioFormat}`);
         } else if (selectedFormat === 'video-only') {
-            // 下载视频（无音频）- 使用流式代理
+            // 下载视频（无音频）- 使用选择的视频格式
+            const videoFormat = appState.videoFormat || 'mp4';
             const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video`;
-            downloadFile(downloadUrl, `${safeTitle}_video.m4s`);
+            downloadFile(downloadUrl, `${safeTitle}_video.${videoFormat}`);
         } else {
-            // 下载视频+音频合体（默认）- 需要服务器合并
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${qn}`;
-            downloadFile(downloadUrl, `${safeTitle}.mp4`);
+            // 下载视频+音频合体（默认）- 使用选择的视频格式
+            const videoFormat = appState.videoFormat || 'mp4';
+            const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${qn}&format=${videoFormat}`;
+            downloadFile(downloadUrl, `${safeTitle}.${videoFormat}`);
         }
         
         // 显示提示
@@ -2503,8 +2514,27 @@ function setPreset(type, val, btn) {
                 const activeQ = document.querySelector('#qualitySegment .segment-opt.active');
                 if(activeQ) moveGlider(qRow, activeQ);
             }, 10);
-        } else {
-            // video+audio 或 video+audio-separate：显示所有相关选项
+        } else if (val === 'video+audio') {
+            // 视音合体：只显示视频格式和画质，不显示音频格式
+            if (qRow) { 
+                qRow.style.display = 'flex';
+                qRow.style.opacity = '1';
+                qRow.style.pointerEvents = 'auto';
+            }
+            if (vfRow) { 
+                vfRow.style.display = 'flex';
+                setTimeout(() => {
+                    const activeVf = document.querySelector('#videoFormatSegment .segment-opt.active');
+                    if(activeVf) moveGlider(vfRow, activeVf);
+                }, 10);
+            }
+            if (afRow) { afRow.style.display = 'none'; }
+            setTimeout(() => {
+                const activeQ = document.querySelector('#qualitySegment .segment-opt.active');
+                if(activeQ) moveGlider(qRow, activeQ);
+            }, 10);
+        } else if (val === 'video+audio-separate') {
+            // 视音分离：显示所有相关选项
             if (qRow) { 
                 qRow.style.display = 'flex';
                 qRow.style.opacity = '1';
@@ -2683,29 +2713,33 @@ async function executeDownload() {
     const safeTitle = (data.title || 'video').replace(/[<>:"/\\|?*]/g, '_');
     const encodedUrl = encodeURIComponent(videoUrl);
     const qn = appState.quality || 80;
+    const videoFormat = appState.videoFormat || 'mp4';
+    const audioFormat = appState.audioFormat || 'mp3';
     
     try {
         if (appState.format === 'cover') {
             const downloadUrl = `${API_BASE_URL}/api/bilibili/download/cover?url=${encodedUrl}`;
             triggerBrowserDownload(downloadUrl, `${safeTitle}.jpg`);
         } else if (appState.format === 'video+audio-separate') {
-            // 分离下载
+            // 分离下载：使用选择的视频和音频格式
             const videoUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video`;
-            triggerBrowserDownload(videoUrl_dl, `${safeTitle}_video.m4s`);
+            triggerBrowserDownload(videoUrl_dl, `${safeTitle}_video.${videoFormat}`);
             setTimeout(() => {
                 const audioUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio`;
-                triggerBrowserDownload(audioUrl_dl, `${safeTitle}_audio.m4a`);
+                triggerBrowserDownload(audioUrl_dl, `${safeTitle}_audio.${audioFormat}`);
             }, 1000);
         } else if (appState.format === 'audio') {
+            // 仅音频：使用选择的音频格式
             const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}.m4a`);
+            triggerBrowserDownload(downloadUrl, `${safeTitle}.${audioFormat}`);
         } else if (appState.format === 'video-only') {
+            // 纯画面：使用选择的视频格式
             const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}_video.m4s`);
+            triggerBrowserDownload(downloadUrl, `${safeTitle}_video.${videoFormat}`);
         } else {
-            // 完整视频（需要服务器合并）
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${qn}`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}.mp4`);
+            // 视音合体：使用选择的视频格式（服务器合并后输出）
+            const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${qn}&format=${videoFormat}`;
+            triggerBrowserDownload(downloadUrl, `${safeTitle}.${videoFormat}`);
         }
     } catch (error) {
         alert('下载失败: ' + error.message);
