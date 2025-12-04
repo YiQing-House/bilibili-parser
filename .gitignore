@@ -5,6 +5,8 @@ package-lock.json
 # 环境变量
 .env
 .env.local
+# GitHub Token（不要提交到仓库）
+GITHUB_TOKEN
 
 # 日志
 *.log
