@@ -227,6 +227,114 @@ class MultiPlatformService {
     }
 
     /**
+     * 解析B站合集/视频列表
+     */
+    async parseBilibiliSeries(videoUrl, cookies = null) {
+        try {
+            const headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.bilibili.com/'
+            };
+            
+            if (cookies) {
+                headers['Cookie'] = typeof cookies === 'string' 
+                    ? cookies 
+                    : Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ');
+            }
+            
+            // 从URL提取bvid
+            const bvidMatch = videoUrl.match(/BV[\w]+/);
+            if (!bvidMatch) {
+                throw new Error('无效的B站视频链接');
+            }
+            const bvid = bvidMatch[0];
+            
+            // 获取视频信息（包含合集/视频列表信息）
+            const videoInfoUrl = `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`;
+            const response = await axios.get(videoInfoUrl, { headers, timeout: 15000 });
+            
+            if (response.data.code !== 0) {
+                throw new Error(response.data.message || '获取视频信息失败');
+            }
+            
+            const data = response.data.data;
+            const results = [];
+            
+            // 检查是否有合集信息（ugc_season）
+            if (data.ugc_season && data.ugc_season.sections) {
+                for (const section of data.ugc_season.sections) {
+                    if (section.episodes) {
+                        for (const episode of section.episodes) {
+                            results.push({
+                                title: episode.title || episode.long_title,
+                                author: episode.arc?.author || data.owner?.name || '未知UP主',
+                                thumbnail: episode.arc?.pic || episode.cover,
+                                duration: this.formatSeconds(episode.arc?.duration || episode.page?.duration || 0),
+                                bvid: episode.bvid,
+                                url: `https://www.bilibili.com/video/${episode.bvid}`,
+                                platform: 'B站',
+                                episodeIndex: episode.title
+                            });
+                        }
+                    }
+                }
+                
+                return {
+                    success: true,
+                    total: results.length,
+                    videos: results,
+                    seriesTitle: data.ugc_season.title,
+                    type: 'series'
+                };
+            }
+            
+            // 检查是否有分P（pages）
+            if (data.pages && data.pages.length > 1) {
+                for (const page of data.pages) {
+                    results.push({
+                        title: `${data.title} - P${page.page} ${page.part}`,
+                        author: data.owner?.name || '未知UP主',
+                        thumbnail: data.pic,
+                        duration: this.formatSeconds(page.duration),
+                        bvid: bvid,
+                        cid: page.cid,
+                        url: `https://www.bilibili.com/video/${bvid}?p=${page.page}`,
+                        platform: 'B站',
+                        pageIndex: page.page
+                    });
+                }
+                
+                return {
+                    success: true,
+                    total: results.length,
+                    videos: results,
+                    seriesTitle: data.title,
+                    type: 'pages'
+                };
+            }
+            
+            // 单个视频，返回自身
+            return {
+                success: true,
+                total: 1,
+                videos: [{
+                    title: data.title,
+                    author: data.owner?.name || '未知UP主',
+                    thumbnail: data.pic,
+                    duration: this.formatSeconds(data.duration),
+                    bvid: bvid,
+                    url: `https://www.bilibili.com/video/${bvid}`,
+                    platform: 'B站'
+                }],
+                type: 'single'
+            };
+            
+        } catch (error) {
+            throw new Error(`解析合集/视频列表失败: ${error.message}`);
+        }
+    }
+
+    /**
      * 解析B站用户投稿
      */
     async parseBilibiliUserVideos(userId, cookies = null) {

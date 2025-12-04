@@ -247,7 +247,7 @@ app.post('/api/bilibili/logout', (req, res) => {
 // B站视频下载（支持画质选择）
 app.get('/api/bilibili/download', async (req, res) => {
     try {
-        const { url, qn = 80, format = 'mp4' } = req.query;
+        const { url, qn = 80, format = 'mp4', nameFormat = 'title' } = req.query;
         
         if (!url) {
             return res.status(400).json({ success: false, error: '请提供视频链接' });
@@ -260,10 +260,10 @@ app.get('/api/bilibili/download', async (req, res) => {
             cookies = loginSessions.get(sessionId).cookies;
         }
         
-        console.log('B站视频下载请求:', { url, qn, format, hasLogin: !!cookies });
+        console.log('B站视频下载请求:', { url, qn, format, nameFormat, hasLogin: !!cookies });
         
-        // 使用bilibiliService下载（支持格式）
-        await bilibiliService.downloadWithQuality(url, parseInt(qn), cookies, res, format);
+        // 使用bilibiliService下载（支持格式和命名）
+        await bilibiliService.downloadWithQuality(url, parseInt(qn), cookies, res, format, nameFormat);
         
     } catch (error) {
         console.error('B站下载错误:', error);
@@ -327,6 +327,35 @@ app.get('/api/bilibili/favorites', async (req, res) => {
         
     } catch (error) {
         console.error('收藏夹解析错误:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// B站合集/视频列表解析
+app.get('/api/bilibili/series', async (req, res) => {
+    try {
+        const { url } = req.query;
+        
+        if (!url) {
+            return res.status(400).json({ success: false, error: '请提供视频链接' });
+        }
+        
+        // 获取用户cookies（如果已登录）
+        let cookies = null;
+        const sessionId = req.cookies?.bili_session;
+        if (sessionId && loginSessions.has(sessionId)) {
+            cookies = loginSessions.get(sessionId).cookies;
+        }
+        
+        console.log('解析B站合集/视频列表:', { url, hasLogin: !!cookies });
+        
+        // 使用multiPlatformService解析合集
+        const result = await multiPlatformService.parseBilibiliSeries(url, cookies);
+        
+        res.json(result);
+        
+    } catch (error) {
+        console.error('合集解析错误:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -494,18 +523,25 @@ app.get('/api/bilibili/stream', async (req, res) => {
             return res.status(400).json({ success: false, error: `无法获取${type === 'audio' ? '音频' : '视频'}链接` });
         }
         
-        // 如果指定了格式，进行转换；否则使用原始格式
-        const ext = format || (type === 'audio' ? 'm4a' : 'm4s');
-        const filename = `${links.title}_${type}.${ext}`;
-        
-        if (format && format !== (type === 'audio' ? 'm4a' : 'm4s')) {
-            // 需要格式转换
-            console.log(`开始格式转换: ${type} -> ${format}`);
-            await bilibiliService.streamWithFormat(targetUrl, res, filename, type, format);
+        // 音频统一转换为 MP3 格式，视频保持原始格式
+        if (type === 'audio') {
+            // 音频强制转换为 MP3
+            const targetFormat = format || 'mp3';
+            const filename = `${links.title}_audio.${targetFormat}`;
+            console.log(`音频转换为 ${targetFormat} 格式`);
+            await bilibiliService.streamWithFormat(targetUrl, res, filename, 'audio', targetFormat);
         } else {
-            // 直接代理（原始格式）
-            console.log(`直接代理下载: ${filename}`);
-            await bilibiliService.streamProxy(targetUrl, res, filename);
+            // 视频：如果指定了格式则转换，否则直接代理
+            const ext = format || 'm4s';
+            const filename = `${links.title}_${type}.${ext}`;
+            
+            if (format && format !== 'm4s') {
+                console.log(`开始格式转换: ${type} -> ${format}`);
+                await bilibiliService.streamWithFormat(targetUrl, res, filename, type, format);
+            } else {
+                console.log(`直接代理下载: ${filename}`);
+                await bilibiliService.streamProxy(targetUrl, res, filename);
+            }
         }
         
     } catch (error) {
@@ -811,6 +847,121 @@ app.get('/api/download', async (req, res) => {
                 error: error.message || '下载失败'
             });
         }
+    }
+});
+
+// ==================== 网易云音乐API代理 ====================
+// 注意：这里使用公开的网易云音乐API服务，实际部署时建议自建API服务
+
+// 搜索音乐
+app.get('/api/music/search', async (req, res) => {
+    try {
+        const { keywords, limit = 30, offset = 0 } = req.query;
+        if (!keywords) {
+            return res.json({ success: false, error: '缺少关键词参数' });
+        }
+
+        // 使用公开的网易云音乐API服务（示例）
+        // 实际使用时需要替换为真实的API地址或自建服务
+        const apiUrl = `https://netease-cloud-music-api-five-rust.vercel.app/search?keywords=${encodeURIComponent(keywords)}&limit=${limit}&offset=${offset}`;
+        
+        const response = await axios.get(apiUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://music.163.com/'
+            },
+            timeout: 10000
+        });
+
+        res.json({ success: true, data: response.data });
+    } catch (error) {
+        console.error('搜索音乐失败:', error.message);
+        res.json({ 
+            success: false, 
+            error: error.message || '搜索失败',
+            // 返回示例数据作为fallback
+            data: {
+                result: {
+                    songs: []
+                }
+            }
+        });
+    }
+});
+
+// 获取歌曲详情（包括播放URL）
+app.get('/api/music/song', async (req, res) => {
+    try {
+        const { id } = req.query;
+        if (!id) {
+            return res.json({ success: false, error: '缺少歌曲ID参数' });
+        }
+
+        // 获取歌曲详情和播放URL
+        const apiUrl = `https://netease-cloud-music-api-five-rust.vercel.app/song/url/v1?id=${id}&level=exhigh`;
+        
+        const response = await axios.get(apiUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://music.163.com/'
+            },
+            timeout: 10000
+        });
+
+        res.json({ success: true, data: response.data });
+    } catch (error) {
+        console.error('获取歌曲失败:', error.message);
+        res.json({ success: false, error: error.message || '获取歌曲失败' });
+    }
+});
+
+// 获取歌词
+app.get('/api/music/lyric', async (req, res) => {
+    try {
+        const { id } = req.query;
+        if (!id) {
+            return res.json({ success: false, error: '缺少歌曲ID参数' });
+        }
+
+        const apiUrl = `https://netease-cloud-music-api-five-rust.vercel.app/lyric?id=${id}`;
+        
+        const response = await axios.get(apiUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://music.163.com/'
+            },
+            timeout: 10000
+        });
+
+        res.json({ success: true, data: response.data });
+    } catch (error) {
+        console.error('获取歌词失败:', error.message);
+        res.json({ success: false, error: error.message || '获取歌词失败' });
+    }
+});
+
+// 获取歌曲详情信息
+app.get('/api/music/detail', async (req, res) => {
+    try {
+        const { ids } = req.query;
+        if (!ids) {
+            return res.json({ success: false, error: '缺少歌曲ID参数' });
+        }
+
+        const apiUrl = `https://netease-cloud-music-api-five-rust.vercel.app/song/detail?ids=${ids}`;
+        
+        const response = await axios.get(apiUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://music.163.com/'
+            },
+            timeout: 10000
+        });
+
+        res.json({ success: true, data: response.data });
+    } catch (error) {
+        console.error('获取歌曲详情失败:', error.message);
+        res.json({ success: false, error: error.message || '获取歌曲详情失败' });
     }
 });
 

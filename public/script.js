@@ -29,6 +29,7 @@ let isVip = false;
 let userInfo = null;
 let qrCheckInterval = null;
 let batchResults = []; // 批量解析结果
+let selectedBatchItems = new Set(); // 选中的批量项目索引
 let gistAnnouncementData = null; // Gist 公告数据
 
 // 预设选项（兼容）
@@ -125,8 +126,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // 窗口大小改变时重新计算指示器位置
     window.addEventListener('resize', () => {
-        const activeFmt = document.querySelector('#formatSegment .segment-opt.active');
-        if(activeFmt) moveGlider(document.getElementById('formatSegment'), activeFmt);
         const activeQ = document.querySelector('#qualitySegment .segment-opt.active');
         if(activeQ) moveGlider(document.getElementById('qualitySegment'), activeQ);
     });
@@ -146,6 +145,17 @@ document.addEventListener('DOMContentLoaded', () => {
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         if (appState.theme === 'auto') {
             applyTheme();
+        }
+    });
+    
+    // 初始化音乐播放器
+    initMusicPlayer();
+    
+    // 点击外部区域关闭播放器
+    document.addEventListener('click', (e) => {
+        const container = document.getElementById('musicPlayerContainer');
+        if (container && !container.contains(e.target)) {
+            closeMusicPlayer();
         }
     });
 });
@@ -308,9 +318,34 @@ async function downloadWithPreset() {
 
     try {
         const videoUrl = videoUrlInput.value.trim();
-        const safeTitle = (currentVideoData.title || 'video').replace(/[<>:"/\\|?*]/g, '_');
+        const title = (currentVideoData.title || 'video').replace(/[<>:"/\\|?*]/g, '_');
+        const author = (currentVideoData.author || 'UP主').replace(/[<>:"/\\|?*]/g, '_');
         const encodedUrl = encodeURIComponent(videoUrl);
         const qn = presetQuality || 80;
+        const maxQ = currentVideoData.maxQuality || 80;
+        
+        // 画质名称映射
+        const qNameMap = {
+            120: '4K', 116: '1080P60', 112: '1080P+', 80: '1080P', 64: '720P', 32: '480P', 16: '360P'
+        };
+        // 实际下载画质
+        const actualQn = qn > maxQ ? maxQ : qn;
+        const qualityName = qNameMap[actualQn] || actualQn;
+        
+        // 根据命名格式生成文件名（画质在第一位）
+        const filenameFormat = appState.filenameFormat || 'title';
+        let baseName;
+        switch (filenameFormat) {
+            case 'title-author':
+                baseName = `${title} - ${author}`;
+                break;
+            case 'author-title':
+                baseName = `${author} - ${title}`;
+                break;
+            default:
+                baseName = title;
+        }
+        const finalName = `${qualityName}_${baseName}`;
         
         // 根据预设格式执行下载
         if (presetFormat === 'cover') {
@@ -321,27 +356,20 @@ async function downloadWithPreset() {
                 return;
             }
             const downloadUrl = `${API_BASE_URL}/api/bilibili/download/cover?url=${encodedUrl}`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}.jpg`);
+            triggerBrowserDownload(downloadUrl, `${baseName}.jpg`);
         } else if (presetFormat === 'video+audio-separate') {
             showToast('开始分离下载，将依次下载视频和音频...', 'success');
-            // 下载视频
             const videoDownloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video`;
-            triggerBrowserDownload(videoDownloadUrl, `${safeTitle}_video.m4s`);
-            // 延迟下载音频
+            triggerBrowserDownload(videoDownloadUrl, `${finalName}_video.m4s`);
             setTimeout(() => {
-                const audioDownloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio`;
-                triggerBrowserDownload(audioDownloadUrl, `${safeTitle}_audio.m4a`);
+                const audioFormat = appState.audioFormat || 'mp3';
+                const audioDownloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio&format=${audioFormat}`;
+                triggerBrowserDownload(audioDownloadUrl, `${finalName}_audio.${audioFormat}`);
             }, 1000);
-        } else if (presetFormat === 'audio') {
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}.m4a`);
-        } else if (presetFormat === 'video-only') {
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}_video.m4s`);
         } else {
-            // 完整视频（需要服务器合并）
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${qn}`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}.mp4`);
+            // 完整视频：传递命名格式给后端
+            const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${qn}&nameFormat=${filenameFormat}`;
+            triggerBrowserDownload(downloadUrl, `${finalName}.mp4`);
         }
         
         showToast('下载已开始...', 'success');
@@ -356,17 +384,166 @@ async function downloadWithPreset() {
     }
 }
 
-// 触发浏览器下载
-function triggerBrowserDownload(url, filename) {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.style.display = 'none';
-    document.body.appendChild(link);
-    link.click();
-    setTimeout(() => {
-        document.body.removeChild(link);
+// 触发浏览器下载（带进度显示）
+async function triggerBrowserDownload(url, filename) {
+    try {
+        // 显示下载进度 UI
+        showDownloadProgress(filename);
+        
+        // 使用 fetch 下载并显示进度
+        const response = await fetch(url);
+        const contentLength = response.headers.get('Content-Length');
+        const total = parseInt(contentLength, 10);
+        
+        if (!response.ok) {
+            throw new Error(`下载失败: ${response.status} ${response.statusText}`);
+        }
+        
+        const reader = response.body.getReader();
+        const chunks = [];
+        let receivedLength = 0;
+        let startTime = Date.now();
+        
+        while (true) {
+            const {done, value} = await reader.read();
+            
+            if (done) break;
+            
+            chunks.push(value);
+            receivedLength += value.length;
+            
+            // 更新进度
+            if (total) {
+                const progress = (receivedLength / total) * 100;
+                const elapsed = (Date.now() - startTime) / 1000; // 秒
+                const speed = receivedLength / elapsed / 1024 / 1024; // MB/s
+                const remaining = (total - receivedLength) / (speed * 1024 * 1024); // 秒
+                
+                updateDownloadProgress(progress, speed, remaining);
+            } else {
+                // 无法获取总大小时，只显示已下载量和速度
+                const elapsed = (Date.now() - startTime) / 1000;
+                const speed = receivedLength / elapsed / 1024 / 1024;
+                updateDownloadProgress(null, speed, null, receivedLength);
+            }
+        }
+        
+        // 合并数据块
+        const blob = new Blob(chunks);
+        const blobUrl = URL.createObjectURL(blob);
+        
+        // 触发下载
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = filename;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        
+        // 清理
+        setTimeout(() => {
+            document.body.removeChild(link);
+            URL.revokeObjectURL(blobUrl);
+            hideDownloadProgress();
         }, 100);
+        
+        showToast('下载完成！', 'success');
+        
+    } catch (error) {
+        console.error('下载失败:', error);
+        hideDownloadProgress();
+        showToast('下载失败: ' + error.message, 'error');
+        
+        // 回退到原生下载方式
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => document.body.removeChild(link), 100);
+    }
+}
+
+// 显示下载进度 UI
+function showDownloadProgress(filename) {
+    // 检查是否已存在进度框
+    let progressBox = document.getElementById('downloadProgressBox');
+    if (!progressBox) {
+        progressBox = document.createElement('div');
+        progressBox.id = 'downloadProgressBox';
+        progressBox.innerHTML = `
+            <div class="download-progress-content">
+                <div class="progress-header">
+                    <i class="fas fa-download"></i>
+                    <span class="progress-filename"></span>
+                    <button class="progress-close" onclick="hideDownloadProgress()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" style="width: 0%"></div>
+                </div>
+                <div class="progress-info">
+                    <span class="progress-percent">0%</span>
+                    <span class="progress-speed">-- MB/s</span>
+                    <span class="progress-remaining">计算中...</span>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(progressBox);
+    }
+    
+    progressBox.querySelector('.progress-filename').textContent = filename;
+    progressBox.style.display = 'block';
+    setTimeout(() => progressBox.classList.add('show'), 10);
+}
+
+// 更新下载进度
+function updateDownloadProgress(progress, speed, remaining, downloaded) {
+    const progressBox = document.getElementById('downloadProgressBox');
+    if (!progressBox) return;
+    
+    if (progress !== null) {
+        progressBox.querySelector('.progress-bar').style.width = progress.toFixed(1) + '%';
+        progressBox.querySelector('.progress-percent').textContent = progress.toFixed(1) + '%';
+    } else {
+        progressBox.querySelector('.progress-percent').textContent = formatFileSize(downloaded);
+    }
+    
+    progressBox.querySelector('.progress-speed').textContent = speed.toFixed(2) + ' MB/s';
+    
+    if (remaining !== null && remaining > 0) {
+        const min = Math.floor(remaining / 60);
+        const sec = Math.floor(remaining % 60);
+        progressBox.querySelector('.progress-remaining').textContent = 
+            min > 0 ? `剩余 ${min}分${sec}秒` : `剩余 ${sec}秒`;
+    } else if (progress === null) {
+        progressBox.querySelector('.progress-remaining').textContent = '未知大小';
+    }
+}
+
+// 隐藏下载进度
+function hideDownloadProgress() {
+    const progressBox = document.getElementById('downloadProgressBox');
+    if (progressBox) {
+        progressBox.classList.remove('show');
+        setTimeout(() => {
+            progressBox.style.display = 'none';
+            // 重置进度
+            progressBox.querySelector('.progress-bar').style.width = '0%';
+            progressBox.querySelector('.progress-percent').textContent = '0%';
+        }, 300);
+    }
+}
+
+// 格式化文件大小
+function formatFileSize(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
 }
 
 // ==================== 设置功能 ====================
@@ -744,7 +921,7 @@ async function handleMultiParse(urls) {
     displayBatchResults(successCount, failedCount);
 }
 
-// 显示批量解析结果（适配新 HTML）
+// 显示批量解析结果（适配新 HTML，带复选框）
 function displayBatchResults(successCount, failedCount) {
     // 尝试新 HTML 的元素 ID，如果不存在则使用旧的
     const batchSectionEl = document.getElementById('batchSection') || document.getElementById('batchResultSection');
@@ -757,6 +934,10 @@ function displayBatchResults(successCount, failedCount) {
     if (resultSection) resultSection.classList.add('hidden');
     
     if (!batchListEl) return;
+    
+    // 清空选中状态
+    selectedBatchItems.clear();
+    updateBatchSelectionCount();
     
     batchListEl.innerHTML = '';
     
@@ -776,6 +957,9 @@ function displayBatchResults(successCount, failedCount) {
             }
             
             item.innerHTML = `
+                <div class="batch-checkbox-container">
+                    <input type="checkbox" class="batch-checkbox" data-index="${index}" onchange="toggleBatchSelection(${index})">
+                </div>
                 <img class="batch-thumb" src="${thumbnailUrl || 'data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 9\"><rect fill=\"%23334155\" width=\"16\" height=\"9\"/></svg>'}">
                 <div class="batch-info">
                     <div class="batch-title">${escapeHtml(data.title || '未知标题')}</div>
@@ -787,6 +971,9 @@ function displayBatchResults(successCount, failedCount) {
             `;
         } else {
             item.innerHTML = `
+                <div class="batch-checkbox-container" style="visibility: hidden;">
+                    <input type="checkbox" class="batch-checkbox" disabled>
+                </div>
                 <div class="batch-info">
                     <div class="batch-title">${escapeHtml(result.url)}</div>
                     <div class="batch-status error"><i class="fas fa-times"></i> ${escapeHtml(result.error)}</div>
@@ -805,9 +992,106 @@ function displayBatchResults(successCount, failedCount) {
         batchSectionEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     
-    // 如果设置了自动下载
-    if (appSettings && appSettings.autoDownload && successCount > 0) {
-        setTimeout(() => downloadAllBatch(), 500);
+    // 禁用自动下载（现在需要手动选择）
+    // if (appSettings && appSettings.autoDownload && successCount > 0) {
+    //     setTimeout(() => downloadAllBatch(), 500);
+    // }
+}
+
+// 切换批量项目的选中状态
+function toggleBatchSelection(index) {
+    const checkbox = document.querySelector(`.batch-checkbox[data-index="${index}"]`);
+    if (!checkbox) return;
+    
+    if (checkbox.checked) {
+        // 检查是否超过5个
+        if (selectedBatchItems.size >= 5) {
+            checkbox.checked = false;
+            showToast('最多只能选择5个视频同时下载，防止服务器超负荷', 'warning');
+            return;
+        }
+        selectedBatchItems.add(index);
+    } else {
+        selectedBatchItems.delete(index);
+    }
+    
+    updateBatchSelectionCount();
+}
+
+// 全选批量项目（最多5个）
+function selectAllBatch() {
+    selectedBatchItems.clear();
+    const checkboxes = document.querySelectorAll('.batch-checkbox:not([disabled])');
+    let count = 0;
+    
+    checkboxes.forEach((checkbox, idx) => {
+        if (count < 5) {
+            const index = parseInt(checkbox.dataset.index);
+            checkbox.checked = true;
+            selectedBatchItems.add(index);
+            count++;
+        } else {
+            checkbox.checked = false;
+        }
+    });
+    
+    updateBatchSelectionCount();
+    
+    if (checkboxes.length > 5) {
+        showToast('已选择前5个视频（防止服务器超负荷）', 'success');
+    } else {
+        showToast(`已全选 ${selectedBatchItems.size} 个视频`, 'success');
+    }
+}
+
+// 反选批量项目（最多5个）
+function invertBatchSelection() {
+    const checkboxes = document.querySelectorAll('.batch-checkbox:not([disabled])');
+    const newSelection = new Set();
+    let count = 0;
+    
+    checkboxes.forEach((checkbox) => {
+        const index = parseInt(checkbox.dataset.index);
+        const shouldSelect = !selectedBatchItems.has(index) && count < 5;
+        
+        if (shouldSelect) {
+            checkbox.checked = true;
+            newSelection.add(index);
+            count++;
+        } else {
+            checkbox.checked = false;
+        }
+    });
+    
+    selectedBatchItems = newSelection;
+    updateBatchSelectionCount();
+    
+    if (count >= 5) {
+        showToast('已反选（最多5个）', 'success');
+    } else {
+        showToast(`已反选 ${selectedBatchItems.size} 个视频`, 'success');
+    }
+}
+
+// 清空批量选择
+function clearBatchSelection() {
+    selectedBatchItems.clear();
+    document.querySelectorAll('.batch-checkbox').forEach(cb => cb.checked = false);
+    updateBatchSelectionCount();
+    showToast('已清空选择', 'success');
+}
+
+// 更新批量选择计数显示
+function updateBatchSelectionCount() {
+    const downloadAllBtn = document.getElementById('downloadAllBtn');
+    if (downloadAllBtn) {
+        if (selectedBatchItems.size > 0) {
+            downloadAllBtn.innerHTML = `<i class="fas fa-download"></i> 下载选中 (${selectedBatchItems.size})`;
+            downloadAllBtn.disabled = false;
+        } else {
+            downloadAllBtn.innerHTML = `<i class="fas fa-download"></i> 下载选中`;
+            downloadAllBtn.disabled = true;
+        }
     }
 }
 
@@ -835,7 +1119,7 @@ async function downloadBatchItem(index) {
         
         try {
             if (format === 'audio') {
-                const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=audio`;
+                const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=audio&format=${audioFormat}`;
                 triggerBrowserDownload(downloadUrl, `${safeTitle}.${audioFormat}`);
             } else if (format === 'cover') {
                 const downloadUrl = `${API_BASE_URL}/api/bilibili/download/cover?url=${encodedUrl}`;
@@ -915,6 +1199,9 @@ async function retryBatchItem(index) {
                 }
                 
                 batchListEl.children[index].innerHTML = `
+                    <div class="batch-checkbox-container">
+                        <input type="checkbox" class="batch-checkbox" data-index="${index}" onchange="toggleBatchSelection(${index})">
+                    </div>
                     <img class="batch-thumb" src="${thumbnailUrl || 'data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 9\"><rect fill=\"%23334155\" width=\"16\" height=\"9\"/></svg>'}">
                     <div class="batch-info">
                         <div class="batch-title">${escapeHtml(resultData.title || '未知标题')}</div>
@@ -973,18 +1260,25 @@ async function retryBatchItem(index) {
     }
 }
 
-// 全部下载
+// 下载选中的批量项目
 async function downloadAllBatch() {
-    // 获取成功项及其原始索引
+    // 获取选中的成功项
     const successItems = [];
-    batchResults.forEach((r, idx) => {
-        if (r.success) {
-            successItems.push({ ...r, originalIndex: idx });
+    
+    if (selectedBatchItems.size === 0) {
+        showToast('请先选择要下载的视频（最多5个）', 'warning');
+        return;
+    }
+    
+    selectedBatchItems.forEach(idx => {
+        const result = batchResults[idx];
+        if (result && result.success) {
+            successItems.push({ ...result, originalIndex: idx });
         }
     });
     
     if (successItems.length === 0) {
-        showToast('没有可下载的项目', 'error');
+        showToast('选中的项目中没有可下载的', 'error');
         return;
     }
     
@@ -1031,7 +1325,7 @@ async function downloadAllBatch() {
             const audioFormat = appState.audioFormat || 'mp3';
             
             if (format === 'audio') {
-                const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=audio`;
+                const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${quality}&type=audio&format=${audioFormat}`;
                 triggerBrowserDownload(downloadUrl, `${safeTitle}.${audioFormat}`);
             } else if (format === 'cover') {
                 const downloadUrl = `${API_BASE_URL}/api/bilibili/download/cover?url=${encodedUrl}`;
@@ -1216,6 +1510,11 @@ async function handleFavoritesParse(favId) {
             
             if (batchSectionEl) batchSectionEl.classList.remove('hidden');
             if (resultSection) resultSection.classList.add('hidden');
+            
+            // 清空选中状态
+            selectedBatchItems.clear();
+            updateBatchSelectionCount();
+            
             if (batchListEl) {
                 batchListEl.innerHTML = '';
                 batchResults.forEach((result, index) => {
@@ -1229,6 +1528,9 @@ async function handleFavoritesParse(favId) {
                         thumbnailUrl = `${API_BASE_URL}/api/proxy/image?url=${encodeURIComponent(thumbnailUrl)}`;
                     }
                     item.innerHTML = `
+                        <div class="batch-checkbox-container">
+                            <input type="checkbox" class="batch-checkbox" data-index="${index}" onchange="toggleBatchSelection(${index})">
+                        </div>
                         <img class="batch-thumb" src="${thumbnailUrl || 'data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 9\"><rect fill=\"%23334155\" width=\"16\" height=\"9\"/></svg>'}">
                         <div class="batch-info">
                             <div class="batch-title">${escapeHtml(data.title || '未知标题')}</div>
@@ -1307,6 +1609,11 @@ async function handleUserVideosParse(uid) {
             
             if (batchSectionEl) batchSectionEl.classList.remove('hidden');
             if (resultSection) resultSection.classList.add('hidden');
+            
+            // 清空选中状态
+            selectedBatchItems.clear();
+            updateBatchSelectionCount();
+            
             if (batchListEl) {
                 batchListEl.innerHTML = '';
                 batchResults.forEach((result, index) => {
@@ -1320,6 +1627,9 @@ async function handleUserVideosParse(uid) {
                         thumbnailUrl = `${API_BASE_URL}/api/proxy/image?url=${encodeURIComponent(thumbnailUrl)}`;
                     }
                     item.innerHTML = `
+                        <div class="batch-checkbox-container">
+                            <input type="checkbox" class="batch-checkbox" data-index="${index}" onchange="toggleBatchSelection(${index})">
+                        </div>
                         <img class="batch-thumb" src="${thumbnailUrl || 'data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 9\"><rect fill=\"%23334155\" width=\"16\" height=\"9\"/></svg>'}">
                         <div class="batch-info">
                             <div class="batch-title">${escapeHtml(data.title || '未知标题')}</div>
@@ -1529,6 +1839,14 @@ async function checkLoginStatus() {
 }
 
 function updateLoginUI() {
+    // 适配新HTML的元素ID
+    const loginBtnArea = document.getElementById('loginBtnArea');
+    const userInfoArea = document.getElementById('userInfoArea');
+    const headerAvatar = document.getElementById('headerAvatar');
+    const headerName = document.getElementById('headerName');
+    const headerVipBadge = document.getElementById('headerVipBadge');
+    
+    // 兼容旧HTML的元素ID
     const loginStatus = document.getElementById('loginStatus');
     const userInfoEl = document.getElementById('userInfo');
     const userAvatar = document.getElementById('userAvatar');
@@ -1536,8 +1854,13 @@ function updateLoginUI() {
     const userVip = document.getElementById('userVip');
     
     if (isLoggedIn && userInfo) {
-        loginStatus.classList.add('hidden');
-        userInfoEl.classList.remove('hidden');
+        // 新HTML
+        if (loginBtnArea) loginBtnArea.classList.add('hidden');
+        if (userInfoArea) userInfoArea.classList.remove('hidden');
+        
+        // 旧HTML
+        if (loginStatus) loginStatus.classList.add('hidden');
+        if (userInfoEl) userInfoEl.classList.remove('hidden');
         
         // 处理头像URL
         let avatarUrl = userInfo.avatar || '';
@@ -1552,22 +1875,42 @@ function updateLoginUI() {
             }
         }
         
-        userAvatar.src = avatarUrl || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="%23ccc"/><text x="12" y="16" text-anchor="middle" fill="%23999" font-size="12">头像</text></svg>';
-        userAvatar.onerror = function() {
-            // 头像加载失败时使用默认头像
-            this.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="%23ccc"/><text x="12" y="16" text-anchor="middle" fill="%23999" font-size="12">头像</text></svg>';
-        };
+        const defaultAvatar = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="%23ccc"/><text x="12" y="16" text-anchor="middle" fill="%23999" font-size="12">头像</text></svg>';
         
-        userName.textContent = userInfo.name || '用户';
+        // 新HTML头像
+        if (headerAvatar) {
+            headerAvatar.src = avatarUrl || defaultAvatar;
+            headerAvatar.onerror = function() {
+                this.src = defaultAvatar;
+            };
+        }
         
+        // 旧HTML头像
+        if (userAvatar) {
+            userAvatar.src = avatarUrl || defaultAvatar;
+            userAvatar.onerror = function() {
+                this.src = defaultAvatar;
+            };
+        }
+        
+        // 用户名
+        if (headerName) headerName.textContent = userInfo.name || '用户';
+        if (userName) userName.textContent = userInfo.name || '用户';
+        
+        // VIP徽章
         if (isVip) {
-            userVip.classList.remove('hidden');
+            if (headerVipBadge) headerVipBadge.classList.remove('hidden');
+            if (userVip) userVip.classList.remove('hidden');
         } else {
-            userVip.classList.add('hidden');
+            if (headerVipBadge) headerVipBadge.classList.add('hidden');
+            if (userVip) userVip.classList.add('hidden');
         }
     } else {
-        loginStatus.classList.remove('hidden');
-        userInfoEl.classList.add('hidden');
+        // 未登录状态
+        if (loginBtnArea) loginBtnArea.classList.remove('hidden');
+        if (userInfoArea) userInfoArea.classList.add('hidden');
+        if (loginStatus) loginStatus.classList.remove('hidden');
+        if (userInfoEl) userInfoEl.classList.add('hidden');
     }
     
     // 更新预设选项中的VIP状态
@@ -2137,13 +2480,13 @@ async function downloadSelected() {
             
             // 延迟下载音频
             setTimeout(() => {
-                const audioUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio`;
+                const audioUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio&format=${audioFormat}`;
                 downloadFile(audioUrl_dl, `${safeTitle}_audio.${audioFormat}`);
             }, 1000);
         } else if (selectedFormat === 'audio') {
             // 下载音频 - 使用选择的音频格式
             const audioFormat = appState.audioFormat || 'mp3';
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio`;
+            const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio&format=${audioFormat}`;
             downloadFile(downloadUrl, `${safeTitle}.${audioFormat}`);
         } else if (selectedFormat === 'video-only') {
             // 下载视频（无音频）- 使用选择的视频格式
@@ -2389,16 +2732,14 @@ function initUI() {
 
     // 延迟初始化，确保 DOM 完全加载
     setTimeout(() => {
-        const fmtBtn = document.querySelector(`#formatSegment .segment-opt[data-val="${appState.format}"]`);
-        if(fmtBtn) {
-            setPreset('format', appState.format, fmtBtn);
-        } else {
-            const defaultBtn = document.querySelector(`#formatSegment .segment-opt[data-val="video+audio"]`);
-            if(defaultBtn) {
-                setPreset('format', 'video+audio', defaultBtn);
-            }
+        // 恢复格式下拉菜单选择
+        const formatDropdown = document.getElementById('formatDropdown');
+        if (formatDropdown) {
+            formatDropdown.value = appState.format || 'video+audio';
+            setFormatFromDropdown(formatDropdown.value);
         }
 
+        // 恢复画质选择
         const qBtn = document.querySelector(`#qualitySegment .segment-opt[data-val="${appState.quality}"]`);
         if(qBtn) {
             setPreset('quality', appState.quality, qBtn);
@@ -2406,28 +2747,6 @@ function initUI() {
             const defaultQBtn = document.querySelector(`#qualitySegment .segment-opt[data-val="80"]`);
             if(defaultQBtn) {
                 setPreset('quality', 80, defaultQBtn);
-            }
-        }
-
-        // 恢复视频格式选择
-        const vfBtn = document.querySelector(`#videoFormatSegment .segment-opt[data-val="${appState.videoFormat}"]`);
-        if(vfBtn) {
-            setPreset('videoFormat', appState.videoFormat, vfBtn);
-        } else {
-            const defaultVfBtn = document.querySelector(`#videoFormatSegment .segment-opt[data-val="mp4"]`);
-            if(defaultVfBtn) {
-                setPreset('videoFormat', 'mp4', defaultVfBtn);
-            }
-        }
-
-        // 恢复音频格式选择
-        const afBtn = document.querySelector(`#audioFormatSegment .segment-opt[data-val="${appState.audioFormat}"]`);
-        if(afBtn) {
-            setPreset('audioFormat', appState.audioFormat, afBtn);
-        } else {
-            const defaultAfBtn = document.querySelector(`#audioFormatSegment .segment-opt[data-val="mp3"]`);
-            if(defaultAfBtn) {
-                setPreset('audioFormat', 'mp3', defaultAfBtn);
             }
         }
         
@@ -2439,12 +2758,13 @@ function initUI() {
 
 // 设置预设（新 HTML 使用）
 function setPreset(type, val, btn) {
-    // 🔒 VIP画质权限检查
+    // 🔒 VIP画质权限检查（仅VIP画质需要登录和大会员）
     if (type === 'quality') {
         const needVip = val > 80; // 120(4K), 116(1080P60), 112(1080P+) 需要大会员
+        // 1080P(80)及以下是免费画质，任何人都可选择
         if (needVip) {
             if (!isLoggedIn) {
-                showToast('请先登录B站账号才能选择此画质', 'error');
+                showToast('此画质需要登录B站账号', 'error');
                 showLoginModal();
                 return; // 阻止选择
             }
@@ -2467,97 +2787,68 @@ function setPreset(type, val, btn) {
         selectedQuality = val;
     }
 
-    const container = btn.parentElement;
-    container.querySelectorAll('.segment-opt').forEach(el => el.classList.remove('active'));
-    btn.classList.add('active');
-    
-    moveGlider(container, btn);
+    // 仅画质选择有滑动条按钮
+    if (btn && btn.parentElement) {
+        const container = btn.parentElement;
+        container.querySelectorAll('.segment-opt').forEach(el => el.classList.remove('active'));
+        btn.classList.add('active');
+        moveGlider(container, btn);
+    }
 
     if (type === 'format') {
         // 更新格式相关的显示逻辑
         const qRow = document.getElementById('qualitySegment');
-        const vfRow = document.getElementById('videoFormatSegment');
-        const afRow = document.getElementById('audioFormatSegment');
-        
-        // 辅助函数：平滑显示/隐藏行
-        function showRow(row) {
-            if (!row) return;
-            // 先移除 hidden 类并设置 display，然后触发动画
-            row.classList.remove('hidden');
-            row.style.display = 'flex';
-            // 使用 requestAnimationFrame 确保 DOM 更新后再触发动画
-            requestAnimationFrame(() => {
-                row.style.maxHeight = '100px'; // 足够的高度
-                row.style.opacity = '1';
-                row.style.pointerEvents = 'auto';
-            });
-        }
-        
-        function hideRow(row) {
-            if (!row) return;
-            // 先触发淡出动画
-            row.style.maxHeight = '0';
-            row.style.opacity = '0';
-            row.style.pointerEvents = 'none';
-            // 等待动画完成后再隐藏
-            setTimeout(() => {
-                row.classList.add('hidden');
-                row.style.display = 'none';
-            }, 300); // 等待动画完成
-        }
         
         if (val === 'cover') {
-            // 封面：隐藏所有格式和画质选择
-            hideRow(qRow);
-            hideRow(vfRow);
-            hideRow(afRow);
-        } else if (val === 'audio') {
-            // 仅音频：显示音频格式，隐藏视频格式和画质
-            hideRow(qRow);
-            hideRow(vfRow);
-            showRow(afRow);
+            // 封面：画质选择变为禁用状态，但保持位置不变
+            if (qRow) { 
+                qRow.style.opacity = '0.4';
+                qRow.style.pointerEvents = 'none';
+            }
+        } else {
+            // 其他模式：显示画质选择
+            if (qRow) { 
+                qRow.style.opacity = '1';
+                qRow.style.pointerEvents = 'auto';
+            }
             setTimeout(() => {
-                const activeAf = document.querySelector('#audioFormatSegment .segment-opt.active');
-                if(activeAf) moveGlider(afRow, activeAf);
-            }, 50);
-        } else if (val === 'video-only') {
-            // 纯画面：显示视频格式和画质，隐藏音频格式
-            showRow(qRow);
-            showRow(vfRow);
-            hideRow(afRow);
-            setTimeout(() => {
-                const activeVf = document.querySelector('#videoFormatSegment .segment-opt.active');
-                if(activeVf) moveGlider(vfRow, activeVf);
                 const activeQ = document.querySelector('#qualitySegment .segment-opt.active');
-                if(activeQ) moveGlider(qRow, activeQ);
-            }, 50);
-        } else if (val === 'video+audio') {
-            // 视音合体：只显示视频格式和画质，不显示音频格式
-            showRow(qRow);
-            showRow(vfRow);
-            hideRow(afRow);
-            setTimeout(() => {
-                const activeVf = document.querySelector('#videoFormatSegment .segment-opt.active');
-                if(activeVf) moveGlider(vfRow, activeVf);
-                const activeQ = document.querySelector('#qualitySegment .segment-opt.active');
-                if(activeQ) moveGlider(qRow, activeQ);
-            }, 50);
-        } else if (val === 'video+audio-separate') {
-            // 视音分离：显示所有相关选项
-            showRow(qRow);
-            showRow(vfRow);
-            showRow(afRow);
-            setTimeout(() => {
-                const activeVf = document.querySelector('#videoFormatSegment .segment-opt.active');
-                if(activeVf) moveGlider(vfRow, activeVf);
-                const activeAf = document.querySelector('#audioFormatSegment .segment-opt.active');
-                if(activeAf) moveGlider(afRow, activeAf);
-                const activeQ = document.querySelector('#qualitySegment .segment-opt.active');
-                if(activeQ) moveGlider(qRow, activeQ);
-            }, 50);
+                if(activeQ && qRow) moveGlider(qRow, activeQ);
+            }, 10);
         }
     }
 
+    if (currentData || currentVideoData) updateDownloadHint();
+}
+
+// 从下拉菜单设置格式
+function setFormatFromDropdown(val) {
+    appState.format = val;
+    localStorage.setItem('preset_format', val);
+    presetFormat = val;
+    selectedFormat = val;
+    
+    // 更新格式相关的显示逻辑
+    const qRow = document.getElementById('qualitySegment');
+    
+    if (val === 'cover') {
+        // 封面：画质选择变为禁用状态，但保持位置不变
+        if (qRow) { 
+            qRow.style.opacity = '0.4';
+            qRow.style.pointerEvents = 'none';
+        }
+    } else {
+        // 其他模式：显示画质选择
+        if (qRow) { 
+            qRow.style.opacity = '1';
+            qRow.style.pointerEvents = 'auto';
+        }
+        setTimeout(() => {
+            const activeQ = document.querySelector('#qualitySegment .segment-opt.active');
+            if(activeQ && qRow) moveGlider(qRow, activeQ);
+        }, 10);
+    }
+    
     if (currentData || currentVideoData) updateDownloadHint();
 }
 
@@ -2571,15 +2862,9 @@ function moveGlider(container, targetBtn) {
         const cRect = container.getBoundingClientRect();
         const bRect = targetBtn.getBoundingClientRect();
         const left = bRect.left - cRect.left + container.scrollLeft;
-        
-        // 先设置宽度，再设置位置，确保动画流畅
         glider.style.width = `${bRect.width}px`;
-        
-        // 使用双重 requestAnimationFrame 确保宽度已应用
-        requestAnimationFrame(() => {
-            glider.style.transform = `translateX(${left}px)`;
-            glider.style.opacity = '0.15'; // 确保可见
-        });
+        glider.style.transform = `translateX(${left}px)`;
+        glider.style.opacity = '0.15'; // 确保可见
     });
 }
 
@@ -2631,12 +2916,36 @@ function showSingleResult(data) {
     
     // 提取支持的画质列表
     if (data.downloadLinks && data.downloadLinks.length > 0) {
-        data.qualities = data.downloadLinks.map(link => link.qn).filter(qn => qn);
+        data.qualities = data.downloadLinks
+            .filter(link => link.exists !== false)
+            .map(link => link.qn)
+            .filter(qn => qn);
     } else {
-        data.qualities = [80, 64, 32, 16]; // 默认画质
+        data.qualities = [80, 64, 32, 16]; // 默认免费画质
     }
     
+    // 计算视频支持的最高画质
+    data.maxQuality = data.qualities.length > 0 ? Math.max(...data.qualities) : 80;
+    console.log('视频支持的最高画质:', data.maxQuality);
+    
+    // 所有免费画质都可选，不禁用任何按钮
+    resetQualityButtons();
+    
     updateDownloadHint();
+}
+
+// 重置画质按钮状态（所有免费画质都可选）
+function resetQualityButtons() {
+    const qualitySegment = document.getElementById('qualitySegment');
+    if (!qualitySegment) return;
+    
+    const buttons = qualitySegment.querySelectorAll('.segment-opt');
+    buttons.forEach(btn => {
+        // 移除所有禁用状态
+        btn.classList.remove('disabled', 'unsupported');
+        btn.style.opacity = '';
+        btn.style.pointerEvents = '';
+    });
 }
 
 // 恢复上次的解析搜索结果（保持登录/退出后的状态）
@@ -2675,27 +2984,29 @@ function updateDownloadHint() {
         hintEl.innerText = "封面图片"; 
         return; 
     }
-    if (appState.format === 'audio') { 
-        hintEl.innerText = "M4A/MP3 音频"; 
-        return; 
-    }
+    
+    // 处理方式名称
+    const formatNames = {
+        'video+audio': '完整',
+        'video+audio-separate': '分离'
+    };
+    const formatName = formatNames[appState.format] || '完整';
 
     const targetQ = appState.quality;
-    const qualities = data.qualities || [];
-    const supported = qualities.includes(targetQ);
+    const maxQ = data.maxQuality || 80;
     
     // 简单的画质名称映射
     const qNameMap = {
         120: '4K', 116: '1080P60', 112: '1080P+', 80: '1080P', 64: '720P', 32: '480P', 16: '360P'
     };
     const targetName = qNameMap[targetQ] || targetQ;
+    const maxName = qNameMap[maxQ] || maxQ;
 
-    if (supported) {
-        hintEl.innerText = targetName;
+    // 画质降级提示只在登录后显示
+    if (isLoggedIn && targetQ > maxQ) {
+        hintEl.innerHTML = `原视频最高 <span style="color:#F59E0B">${maxName}</span>，将按此画质下载 · ${formatName}`;
     } else {
-        const maxQ = qualities.length > 0 ? Math.max(...qualities) : 80;
-        const maxName = qNameMap[maxQ] || maxQ;
-        hintEl.innerHTML = `不支持 ${targetName}，将自动降至 <span style="color:#F59E0B">${maxName}</span>`;
+        hintEl.innerText = `${targetName} · ${formatName}`;
     }
 }
 
@@ -2713,36 +3024,54 @@ async function executeDownload() {
         return;
     }
     
-    const safeTitle = (data.title || 'video').replace(/[<>:"/\\|?*]/g, '_');
+    const title = (data.title || 'video').replace(/[<>:"/\\|?*]/g, '_');
+    const author = (data.author || 'UP主').replace(/[<>:"/\\|?*]/g, '_');
     const encodedUrl = encodeURIComponent(videoUrl);
     const qn = appState.quality || 80;
+    const maxQ = data.maxQuality || 80;
     const videoFormat = appState.videoFormat || 'mp4';
     const audioFormat = appState.audioFormat || 'mp3';
+    
+    // 画质名称映射
+    const qNameMap = {
+        120: '4K', 116: '1080P60', 112: '1080P+', 80: '1080P', 64: '720P', 32: '480P', 16: '360P'
+    };
+    // 实际下载画质（如果预设高于最高画质则降级）
+    const actualQn = qn > maxQ ? maxQ : qn;
+    const qualityName = qNameMap[actualQn] || actualQn;
+    
+    // 根据命名格式生成文件名（画质在第一位）
+    const filenameFormat = appState.filenameFormat || 'title';
+    let baseName;
+    switch (filenameFormat) {
+        case 'title-author':
+            baseName = `${title} - ${author}`;
+            break;
+        case 'author-title':
+            baseName = `${author} - ${title}`;
+            break;
+        default: // 'title'
+            baseName = title;
+    }
+    // 画质放在第一位
+    const finalName = `${qualityName}_${baseName}`;
     
     try {
         if (appState.format === 'cover') {
             const downloadUrl = `${API_BASE_URL}/api/bilibili/download/cover?url=${encodedUrl}`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}.jpg`);
+            triggerBrowserDownload(downloadUrl, `${baseName}.jpg`);
         } else if (appState.format === 'video+audio-separate') {
-            // 分离下载：使用选择的视频和音频格式
+            // 分离下载
             const videoUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video&format=${videoFormat}`;
-            triggerBrowserDownload(videoUrl_dl, `${safeTitle}_video.${videoFormat}`);
+            triggerBrowserDownload(videoUrl_dl, `${finalName}_video.${videoFormat}`);
             setTimeout(() => {
                 const audioUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio&format=${audioFormat}`;
-                triggerBrowserDownload(audioUrl_dl, `${safeTitle}_audio.${audioFormat}`);
+                triggerBrowserDownload(audioUrl_dl, `${finalName}_audio.${audioFormat}`);
             }, 1000);
-        } else if (appState.format === 'audio') {
-            // 仅音频：使用选择的音频格式
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio&format=${audioFormat}`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}.${audioFormat}`);
-        } else if (appState.format === 'video-only') {
-            // 纯画面：使用选择的视频格式
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video&format=${videoFormat}`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}_video.${videoFormat}`);
         } else {
-            // 视音合体：使用选择的视频格式（服务器合并后输出）
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${qn}&format=${videoFormat}`;
-            triggerBrowserDownload(downloadUrl, `${safeTitle}.${videoFormat}`);
+            // 完整视频：传递命名格式给后端
+            const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${qn}&format=${videoFormat}&nameFormat=${filenameFormat}`;
+            triggerBrowserDownload(downloadUrl, `${finalName}.${videoFormat}`);
         }
     } catch (error) {
         alert('下载失败: ' + error.message);
@@ -2897,6 +3226,42 @@ function deleteHistoryItem(e, idx) {
 function clearHistory() {
     localStorage.removeItem('parse_history');
     loadHistoryToDropdown();
+}
+
+// 清空所有（输入框 + 解析结果）
+function clearAll() {
+    // 清空输入框
+    const videoUrlInput = document.getElementById('videoUrl');
+    if (videoUrlInput) {
+        videoUrlInput.value = '';
+    }
+    
+    // 隐藏单视频结果
+    const resultSection = document.getElementById('resultSection');
+    if (resultSection) {
+        resultSection.classList.add('hidden');
+    }
+    
+    // 隐藏批量结果
+    const batchSection = document.getElementById('batchSection');
+    if (batchSection) {
+        batchSection.classList.add('hidden');
+    }
+    
+    // 清空批量列表
+    const batchList = document.getElementById('batchList');
+    if (batchList) {
+        batchList.innerHTML = '';
+    }
+    
+    // 重置全局数据
+    currentData = null;
+    currentVideoData = null;
+    batchResults = [];
+    
+    // 清除localStorage中保存的解析结果
+    localStorage.removeItem('lastParseResult');
+    localStorage.removeItem('lastParseUrl');
 }
 
 // 检查登录状态（新 HTML 使用）
@@ -3155,11 +3520,12 @@ downloadAllBatch = function() {
                     const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video`;
                     triggerBrowserDownload(downloadUrl, `${safeTitle}_video.m4s`);
                 } else if (appState.format === 'video+audio-separate') {
+                    const audioFormat = appState.audioFormat || 'mp3';
                     const videoUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video`;
                     triggerBrowserDownload(videoUrl, `${safeTitle}_video.m4s`);
                     setTimeout(() => {
-                        const audioUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio`;
-                        triggerBrowserDownload(audioUrl, `${safeTitle}_audio.m4a`);
+                        const audioUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio&format=${audioFormat}`;
+                        triggerBrowserDownload(audioUrl, `${safeTitle}_audio.${audioFormat}`);
                     }, 800);
                 } else {
                     const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${qn}`;
@@ -3190,8 +3556,11 @@ downloadAllBatch = function() {
 function clearBatch() {
     if (batchSection) batchSection.classList.add('hidden');
     batchResults = [];
+    selectedBatchItems.clear(); // 清空选中状态
     if (batchList) batchList.innerHTML = '';
     if (batchCount) batchCount.textContent = '0';
+    updateBatchSelectionCount();
+    showToast('已清空批量列表', 'success');
 }
 
 // ==================== 背景图系统 (二次元美少女) ====================
@@ -3427,6 +3796,12 @@ window.downloadBatchItem = downloadBatchItem;
 window.retryBatchItem = retryBatchItem;
 window.downloadAllBatch = downloadAllBatch;
 window.clearBatchResults = clearBatchResults;
+// 批量选择功能
+window.toggleBatchSelection = toggleBatchSelection;
+window.selectAllBatch = selectAllBatch;
+window.invertBatchSelection = invertBatchSelection;
+window.clearBatchSelection = clearBatchSelection;
+window.updateBatchSelectionCount = updateBatchSelectionCount;
 // Gist 公告
 window.showGistAnnouncement = showGistAnnouncement;
 window.closeGistAnnouncement = closeGistAnnouncement;
@@ -3442,6 +3817,8 @@ window.setTheme = toggleTheme; // 兼容旧代码
 window.saveSettings = saveSettings;
 // 新 HTML 使用的函数
 window.setPreset = setPreset;
+window.setFormatFromDropdown = setFormatFromDropdown;
+window.resetQualityButtons = resetQualityButtons;
 window.moveGlider = moveGlider;
 window.showSingleResult = showSingleResult;
 window.executeDownload = executeDownload;
@@ -3451,6 +3828,7 @@ window.toggleHistory = toggleHistory;
 window.loadHistoryToDropdown = loadHistoryToDropdown;
 window.deleteHistoryItem = deleteHistoryItem;
 window.clearHistory = clearHistory;
+window.clearAll = clearAll;
 window.checkLogin = checkLogin;
 window.clearBatch = clearBatch;
 window.initUI = initUI;
@@ -3487,3 +3865,572 @@ function closeFeedbackModal() {
     const modal = document.getElementById('feedbackModal');
     if (modal) modal.classList.add('hidden');
 }
+
+// ==================== 音乐播放器功能 ====================
+
+// 音乐播放器状态
+let musicPlayerState = {
+    isExpanded: false,
+    isPlaying: false,
+    currentIndex: -1,
+    playlist: [],
+    audio: null,
+    volume: 50,
+    currentTime: 0,
+    duration: 0
+};
+
+// 明明音乐API配置
+const MUSIC_API_CONFIG = {
+    baseUrl: 'https://music.lzmhhh.com',
+    // API接口
+    searchUrl: 'https://music.lzmhhh.com/api/search',
+    playUrl: 'https://music.lzmhhh.com/api/play',
+    // 默认搜索关键词
+    defaultKeywords: {
+        '鬼灭之刃': ['鬼灭之刃', '紅蓮華', '炎', '明け星', '残響散歌'],
+        '邓紫棋': ['邓紫棋', 'G.E.M.', '光年之外', '泡沫', '画']
+    }
+};
+
+// 初始化音乐播放器
+function initMusicPlayer() {
+    // 创建audio元素
+    if (!musicPlayerState.audio) {
+        musicPlayerState.audio = new Audio();
+        musicPlayerState.audio.volume = musicPlayerState.volume / 100;
+        
+        // 监听播放事件
+        musicPlayerState.audio.addEventListener('play', () => {
+            musicPlayerState.isPlaying = true;
+            updatePlayPauseButton();
+            updateVinylRotation(true);
+        });
+        
+        musicPlayerState.audio.addEventListener('pause', () => {
+            musicPlayerState.isPlaying = false;
+            updatePlayPauseButton();
+            updateVinylRotation(false);
+        });
+        
+        musicPlayerState.audio.addEventListener('timeupdate', updateProgress);
+        musicPlayerState.audio.addEventListener('loadedmetadata', () => {
+            musicPlayerState.duration = musicPlayerState.audio.duration;
+            updateTotalTime();
+        });
+        
+        musicPlayerState.audio.addEventListener('ended', playNext);
+    }
+    
+    // 加载歌单
+    loadPlaylist();
+    
+    // 恢复音量
+    const savedVolume = localStorage.getItem('musicVolume');
+    if (savedVolume) {
+        musicPlayerState.volume = parseInt(savedVolume);
+        if (musicPlayerState.audio) {
+            musicPlayerState.audio.volume = musicPlayerState.volume / 100;
+        }
+        const volumeSlider = document.getElementById('volumeSlider');
+        if (volumeSlider) volumeSlider.value = musicPlayerState.volume;
+    }
+}
+
+// 切换播放器展开/收起（精灵球效果）
+function toggleMusicPlayer(event) {
+    if (event) {
+        event.stopPropagation(); // 阻止事件冒泡
+    }
+    
+    const minimized = document.getElementById('musicPlayerMinimized');
+    const expanded = document.getElementById('musicPlayerExpanded');
+    
+    if (!minimized || !expanded) return;
+    
+    musicPlayerState.isExpanded = !musicPlayerState.isExpanded;
+    
+    if (musicPlayerState.isExpanded) {
+        // 精灵球弹出：隐藏最小化，显示展开
+        minimized.classList.add('hidden');
+        minimized.classList.remove('pokeball-in');
+        expanded.classList.remove('hidden', 'pokeball-close');
+        expanded.classList.add('pokeball-out');
+    } else {
+        // 精灵球收回：播放收回动画
+        expanded.classList.remove('pokeball-out');
+        expanded.classList.add('pokeball-close');
+        closePlaylist();
+        
+        // 动画结束后切换显示
+        setTimeout(() => {
+            expanded.classList.add('hidden');
+            minimized.classList.remove('hidden');
+            minimized.classList.add('pokeball-in');
+        }, 280); // 与CSS动画时长匹配
+    }
+}
+
+// 关闭播放器（点击外部区域时调用）
+function closeMusicPlayer() {
+    const minimized = document.getElementById('musicPlayerMinimized');
+    const expanded = document.getElementById('musicPlayerExpanded');
+    
+    if (!minimized || !expanded) return;
+    
+    if (musicPlayerState.isExpanded) {
+        musicPlayerState.isExpanded = false;
+        // 精灵球收回动画
+        expanded.classList.remove('pokeball-out');
+        expanded.classList.add('pokeball-close');
+        closePlaylist();
+        
+        setTimeout(() => {
+            expanded.classList.add('hidden');
+            minimized.classList.remove('hidden');
+            minimized.classList.add('pokeball-in');
+        }, 280);
+    }
+}
+
+// 更新播放/暂停按钮
+function updatePlayPauseButton() {
+    const btn = document.getElementById('playPauseBtn');
+    if (!btn) return;
+    
+    const icon = btn.querySelector('i');
+    if (icon) {
+        icon.className = musicPlayerState.isPlaying ? 'fas fa-pause' : 'fas fa-play';
+    }
+}
+
+// 更新黑胶旋转
+function updateVinylRotation(playing) {
+    const vinyl = document.getElementById('vinylRecord');
+    const vinylLarge = document.getElementById('vinylRecordLarge');
+    
+    if (vinyl) {
+        if (playing) {
+            vinyl.classList.add('playing');
+        } else {
+            vinyl.classList.remove('playing');
+        }
+    }
+    
+    if (vinylLarge) {
+        if (playing) {
+            vinylLarge.classList.add('playing');
+        } else {
+            vinylLarge.classList.remove('playing');
+        }
+    }
+}
+
+// 切换播放/暂停
+function togglePlayPause() {
+    if (!musicPlayerState.audio) return;
+    
+    if (musicPlayerState.currentIndex === -1 && musicPlayerState.playlist.length > 0) {
+        // 如果没有播放，播放第一首
+        playMusic(0);
+    } else if (musicPlayerState.isPlaying) {
+        musicPlayerState.audio.pause();
+    } else {
+        musicPlayerState.audio.play();
+    }
+}
+
+// 播放指定索引的音乐
+function playMusic(index) {
+    if (index < 0 || index >= musicPlayerState.playlist.length) return;
+    
+    const music = musicPlayerState.playlist[index];
+    if (!music || !music.url) return;
+    
+    musicPlayerState.currentIndex = index;
+    
+    if (musicPlayerState.audio) {
+        musicPlayerState.audio.src = music.url;
+        musicPlayerState.audio.load();
+        musicPlayerState.audio.play().catch(err => {
+            console.error('播放失败:', err);
+            showToast('播放失败，请检查音乐链接', 'error');
+        });
+    }
+    
+    // 更新UI
+    updateMusicInfo(music);
+    updatePlaylistHighlight();
+}
+
+// 更新音乐信息
+function updateMusicInfo(music) {
+    const titleEl = document.getElementById('musicTitle');
+    const artistEl = document.getElementById('musicArtist');
+    
+    if (titleEl) titleEl.textContent = music.title || '未知标题';
+    if (artistEl) artistEl.textContent = music.artist || '未知艺术家';
+}
+
+// 更新播放列表高亮
+function updatePlaylistHighlight() {
+    const items = document.querySelectorAll('.playlist-item');
+    items.forEach((item, index) => {
+        if (index === musicPlayerState.currentIndex) {
+            item.classList.add('playing');
+        } else {
+            item.classList.remove('playing');
+        }
+    });
+}
+
+// 上一首
+function playPrevious() {
+    if (musicPlayerState.playlist.length === 0) return;
+    
+    let newIndex = musicPlayerState.currentIndex - 1;
+    if (newIndex < 0) newIndex = musicPlayerState.playlist.length - 1;
+    
+    playMusic(newIndex);
+}
+
+// 下一首
+function playNext() {
+    if (musicPlayerState.playlist.length === 0) return;
+    
+    let newIndex = musicPlayerState.currentIndex + 1;
+    if (newIndex >= musicPlayerState.playlist.length) newIndex = 0;
+    
+    playMusic(newIndex);
+}
+
+// 更新进度条
+function updateProgress() {
+    if (!musicPlayerState.audio) return;
+    
+    musicPlayerState.currentTime = musicPlayerState.audio.currentTime;
+    const progress = (musicPlayerState.currentTime / musicPlayerState.duration) * 100;
+    
+    const progressFill = document.getElementById('musicProgressFill');
+    if (progressFill) {
+        progressFill.style.width = progress + '%';
+    }
+    
+    updateCurrentTime();
+}
+
+// 更新当前时间
+function updateCurrentTime() {
+    const timeEl = document.getElementById('musicCurrentTime');
+    if (timeEl) {
+        timeEl.textContent = formatTime(musicPlayerState.currentTime);
+    }
+}
+
+// 更新总时长
+function updateTotalTime() {
+    const timeEl = document.getElementById('musicTotalTime');
+    if (timeEl) {
+        timeEl.textContent = formatTime(musicPlayerState.duration);
+    }
+}
+
+// 格式化时间
+function formatTime(seconds) {
+    if (isNaN(seconds)) return '00:00';
+    
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+// 跳转播放位置
+function seekMusic(event) {
+    if (!musicPlayerState.audio || !musicPlayerState.duration) return;
+    
+    const progressBar = event.currentTarget;
+    const rect = progressBar.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const percent = x / rect.width;
+    const newTime = percent * musicPlayerState.duration;
+    
+    musicPlayerState.audio.currentTime = newTime;
+}
+
+// 设置音量
+function setVolume(value) {
+    musicPlayerState.volume = parseInt(value);
+    if (musicPlayerState.audio) {
+        musicPlayerState.audio.volume = musicPlayerState.volume / 100;
+    }
+    localStorage.setItem('musicVolume', musicPlayerState.volume);
+}
+
+// 加载歌单
+async function loadPlaylist() {
+    const playlistItems = document.getElementById('playlistItems');
+    if (!playlistItems) return;
+    
+    playlistItems.innerHTML = '<div class="playlist-loading">正在加载歌单...</div>';
+    
+    try {
+        // 优先从明明音乐API获取歌单
+        let playlist = await fetchPlaylistFromMusicAPI();
+        
+        if (!playlist || playlist.length === 0) {
+            // 如果API获取失败，使用默认歌单
+            playlist = getDefaultPlaylist();
+        }
+        
+        musicPlayerState.playlist = playlist;
+        renderPlaylist();
+    } catch (error) {
+        console.error('加载歌单失败:', error);
+        // 使用默认歌单
+        musicPlayerState.playlist = getDefaultPlaylist();
+        renderPlaylist();
+    }
+}
+
+// 从明明音乐API获取歌单
+async function fetchPlaylistFromMusicAPI() {
+    try {
+        const playlist = [];
+        
+        // 搜索鬼灭之刃相关歌曲
+        const demonSlayerKeywords = MUSIC_API_CONFIG.defaultKeywords['鬼灭之刃'];
+        for (const keyword of demonSlayerKeywords.slice(0, 3)) {
+            try {
+                const songs = await searchMusicFromAPI(keyword);
+                if (songs && songs.length > 0) {
+                    playlist.push(...songs.slice(0, 2)); // 每个关键词最多2首
+                }
+            } catch (e) {
+                console.warn(`搜索"${keyword}"失败:`, e);
+            }
+        }
+        
+        // 搜索邓紫棋相关歌曲
+        const gemKeywords = MUSIC_API_CONFIG.defaultKeywords['邓紫棋'];
+        for (const keyword of gemKeywords.slice(0, 3)) {
+            try {
+                const songs = await searchMusicFromAPI(keyword);
+                if (songs && songs.length > 0) {
+                    playlist.push(...songs.slice(0, 2)); // 每个关键词最多2首
+                }
+            } catch (e) {
+                console.warn(`搜索"${keyword}"失败:`, e);
+            }
+        }
+        
+        return playlist.length > 0 ? playlist : null;
+    } catch (error) {
+        console.error('获取明明音乐歌单失败:', error);
+        return null;
+    }
+}
+
+// 从明明音乐API搜索音乐
+async function searchMusicFromAPI(keyword) {
+    try {
+        // 尝试使用明明音乐的API接口
+        // 注意：实际API接口可能需要根据网站实际情况调整
+        const searchUrl = `${MUSIC_API_CONFIG.searchUrl}?keyword=${encodeURIComponent(keyword)}`;
+        
+        const response = await fetch(searchUrl, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'Referer': 'https://music.lzmhhh.com/'
+            },
+            mode: 'cors'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            // 根据实际API返回格式解析
+            if (data.data && Array.isArray(data.data)) {
+                return data.data.map(item => ({
+                    title: item.name || item.title || keyword,
+                    artist: item.artist || item.singer || '未知',
+                    url: item.url || item.playUrl || item.src
+                })).filter(item => item.url); // 过滤掉没有URL的项
+            } else if (Array.isArray(data)) {
+                return data.map(item => ({
+                    title: item.name || item.title || keyword,
+                    artist: item.artist || item.singer || '未知',
+                    url: item.url || item.playUrl || item.src
+                })).filter(item => item.url);
+            }
+        }
+        
+        return [];
+    } catch (error) {
+        console.warn(`搜索音乐失败 (${keyword}):`, error);
+        // 如果API调用失败，返回空数组
+        return [];
+    }
+}
+
+// 获取默认歌单（鬼灭之刃相关音乐 - 2025年可用）
+// 注意：使用合法的免费音乐资源，用户可自行配置GitHub歌单
+function getDefaultPlaylist() {
+    return [
+        {
+            title: '紅蓮華 (Gurenge)',
+            artist: 'LiSA - 鬼灭之刃',
+            url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'
+        },
+        {
+            title: '炎 (Homura)',
+            artist: 'LiSA - 鬼灭之刃',
+            url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3'
+        },
+        {
+            title: '明け星 (Akeboshi)',
+            artist: 'LiSA - 鬼灭之刃',
+            url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3'
+        },
+        {
+            title: '残響散歌 (Zankyousanka)',
+            artist: 'Aimer - 鬼灭之刃',
+            url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3'
+        },
+        {
+            title: 'from the edge',
+            artist: 'FictionJunction - 鬼灭之刃',
+            url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3'
+        },
+        {
+            title: 'Kamado Tanjiro no Uta',
+            artist: 'Go Shiina - 鬼灭之刃',
+            url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3'
+        }
+    ];
+}
+
+// 渲染歌单
+function renderPlaylist() {
+    const playlistItems = document.getElementById('playlistItems');
+    if (!playlistItems) return;
+    
+    if (musicPlayerState.playlist.length === 0) {
+        playlistItems.innerHTML = '<div class="playlist-empty">暂无音乐，请配置GitHub歌单</div>';
+        return;
+    }
+    
+    playlistItems.innerHTML = musicPlayerState.playlist.map((music, index) => `
+        <div class="playlist-item ${index === musicPlayerState.currentIndex ? 'playing' : ''}" 
+             onclick="playMusic(${index})">
+            <div class="playlist-item-icon">
+                <i class="fas fa-music"></i>
+            </div>
+            <div class="playlist-item-info">
+                <div class="playlist-item-title">${escapeHtml(music.title || '未知标题')}</div>
+                <div class="playlist-item-artist">${escapeHtml(music.artist || '未知艺术家')}</div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// HTML转义
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// 刷新歌单
+function refreshPlaylist(event) {
+    if (event) {
+        event.stopPropagation(); // 阻止事件冒泡
+    }
+    
+    const btn = document.querySelector('.refresh-playlist-btn');
+    if (btn) {
+        btn.classList.add('rotating');
+    }
+    
+    loadPlaylist().finally(() => {
+        if (btn) {
+            setTimeout(() => {
+                btn.classList.remove('rotating');
+            }, 500);
+        }
+    });
+}
+
+// 切换歌单显示/隐藏
+function togglePlaylist(event) {
+    if (event) {
+        event.stopPropagation(); // 阻止事件冒泡
+    }
+    
+    const playlistItems = document.getElementById('playlistItems');
+    const toggleBtn = document.querySelector('.playlist-icon-btn');
+    
+    if (!playlistItems || !toggleBtn) return;
+    
+    const isHidden = playlistItems.classList.contains('hidden');
+    
+    if (isHidden) {
+        playlistItems.classList.remove('hidden');
+        toggleBtn.classList.add('active');
+    } else {
+        playlistItems.classList.add('hidden');
+        toggleBtn.classList.remove('active');
+    }
+}
+
+// 关闭歌单
+function closePlaylist() {
+    const playlistItems = document.getElementById('playlistItems');
+    const toggleBtn = document.querySelector('.playlist-icon-btn');
+    
+    if (playlistItems) {
+        playlistItems.classList.add('hidden');
+    }
+    if (toggleBtn) {
+        toggleBtn.classList.remove('active');
+    }
+}
+
+// 显示提示消息
+function showToast(message, type = 'success') {
+    // 使用现有的toast系统或创建新的
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 100px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: ${type === 'error' ? '#ef4444' : '#10b981'};
+        color: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        z-index: 10000;
+        animation: slideUp 0.3s ease;
+    `;
+    
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+    }, 2000);
+}
+
+// 导出音乐播放器函数
+window.toggleMusicPlayer = toggleMusicPlayer;
+window.closeMusicPlayer = closeMusicPlayer;
+window.togglePlayPause = togglePlayPause;
+window.playPrevious = playPrevious;
+window.playNext = playNext;
+window.playMusic = playMusic;
+window.seekMusic = seekMusic;
+window.setVolume = setVolume;
+window.refreshPlaylist = refreshPlaylist;
+window.togglePlaylist = togglePlaylist;
+window.closePlaylist = closePlaylist;
