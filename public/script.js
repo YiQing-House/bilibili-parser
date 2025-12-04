@@ -2722,19 +2722,19 @@ async function executeDownload() {
             triggerBrowserDownload(downloadUrl, `${safeTitle}.jpg`);
         } else if (appState.format === 'video+audio-separate') {
             // 分离下载：使用选择的视频和音频格式
-            const videoUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video`;
+            const videoUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video&format=${videoFormat}`;
             triggerBrowserDownload(videoUrl_dl, `${safeTitle}_video.${videoFormat}`);
             setTimeout(() => {
-                const audioUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio`;
+                const audioUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio&format=${audioFormat}`;
                 triggerBrowserDownload(audioUrl_dl, `${safeTitle}_audio.${audioFormat}`);
             }, 1000);
         } else if (appState.format === 'audio') {
             // 仅音频：使用选择的音频格式
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio`;
+            const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio&format=${audioFormat}`;
             triggerBrowserDownload(downloadUrl, `${safeTitle}.${audioFormat}`);
         } else if (appState.format === 'video-only') {
             // 纯画面：使用选择的视频格式
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video`;
+            const downloadUrl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video&format=${videoFormat}`;
             triggerBrowserDownload(downloadUrl, `${safeTitle}_video.${videoFormat}`);
         } else {
             // 视音合体：使用选择的视频格式（服务器合并后输出）

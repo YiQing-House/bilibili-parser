@@ -247,7 +247,7 @@ app.post('/api/bilibili/logout', (req, res) => {
 // B站视频下载（支持画质选择）
 app.get('/api/bilibili/download', async (req, res) => {
     try {
-        const { url, qn = 80 } = req.query;
+        const { url, qn = 80, format = 'mp4' } = req.query;
         
         if (!url) {
             return res.status(400).json({ success: false, error: '请提供视频链接' });
@@ -260,10 +260,10 @@ app.get('/api/bilibili/download', async (req, res) => {
             cookies = loginSessions.get(sessionId).cookies;
         }
         
-        console.log('B站视频下载请求:', { url, qn, hasLogin: !!cookies });
+        console.log('B站视频下载请求:', { url, qn, format, hasLogin: !!cookies });
         
-        // 使用bilibiliService下载
-        await bilibiliService.downloadWithQuality(url, parseInt(qn), cookies, res);
+        // 使用bilibiliService下载（支持格式）
+        await bilibiliService.downloadWithQuality(url, parseInt(qn), cookies, res, format);
         
     } catch (error) {
         console.error('B站下载错误:', error);
@@ -471,7 +471,7 @@ app.get('/api/bilibili/direct-links', async (req, res) => {
 // 流式代理下载（单独视频或音频，不合并）
 app.get('/api/bilibili/stream', async (req, res) => {
     try {
-        const { url, qn = 80, type = 'video' } = req.query;
+        const { url, qn = 80, type = 'video', format } = req.query;
         
         if (!url) {
             return res.status(400).json({ success: false, error: '请提供视频链接' });
@@ -484,7 +484,7 @@ app.get('/api/bilibili/stream', async (req, res) => {
             cookies = loginSessions.get(sessionId).cookies;
         }
         
-        console.log('流式代理下载:', { url, qn, type, hasLogin: !!cookies });
+        console.log('流式代理下载:', { url, qn, type, format, hasLogin: !!cookies });
         
         // 获取直接链接
         const links = await bilibiliService.getDirectLinks(url, parseInt(qn), cookies);
@@ -494,10 +494,17 @@ app.get('/api/bilibili/stream', async (req, res) => {
             return res.status(400).json({ success: false, error: `无法获取${type === 'audio' ? '音频' : '视频'}链接` });
         }
         
-        const ext = type === 'audio' ? 'm4a' : 'm4s';
+        // 如果指定了格式，进行转换；否则使用原始格式
+        const ext = format || (type === 'audio' ? 'm4a' : 'm4s');
         const filename = `${links.title}_${type}.${ext}`;
         
-        await bilibiliService.streamProxy(targetUrl, res, filename);
+        if (format && format !== (type === 'audio' ? 'm4a' : 'm4s')) {
+            // 需要格式转换
+            await bilibiliService.streamWithFormat(targetUrl, res, filename, type, format);
+        } else {
+            // 直接代理
+            await bilibiliService.streamProxy(targetUrl, res, filename);
+        }
         
     } catch (error) {
         console.error('流式代理下载错误:', error);

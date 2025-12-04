@@ -318,8 +318,13 @@ class BilibiliService {
 
     /**
      * 带画质选择的下载方法（流式传输到浏览器）
+     * @param {string} url - 视频URL
+     * @param {number} qn - 画质
+     * @param {object} cookies - 登录cookies
+     * @param {object} res - Express响应对象
+     * @param {string} format - 输出格式 (mp4, flv, mkv, webm)
      */
-    async downloadWithQuality(url, qn = 80, cookies = null, res) {
+    async downloadWithQuality(url, qn = 80, cookies = null, res, format = 'mp4') {
         try {
             console.log('开始下载 B站视频:', { url, qn, hasLogin: !!cookies });
             
@@ -360,7 +365,7 @@ class BilibiliService {
             const safeTitle = (videoInfo.title || 'video').replace(/[<>:"/\\|?*]/g, '_').substring(0, 50);
             const videoFile = path.join(this.downloadDir, `${timestamp}_video.m4s`);
             const audioFile = path.join(this.downloadDir, `${timestamp}_audio.m4s`);
-            const outputFile = path.join(this.downloadDir, `${safeTitle}.mp4`);
+            const outputFile = path.join(this.downloadDir, `${safeTitle}.${format}`);
             
             // 下载视频流
             console.log('下载视频流...');
@@ -374,8 +379,8 @@ class BilibiliService {
                 // 检查 ffmpeg 并合并
                 const hasFfmpeg = await this.checkFfmpeg();
                 if (hasFfmpeg) {
-                    console.log('合并音视频...');
-                    await this.mergeVideoAudio(videoFile, audioFile, outputFile);
+                    console.log(`合并音视频并转换为 ${format} 格式...`);
+                    await this.mergeVideoAudio(videoFile, audioFile, outputFile, format);
                     
                     // 清理临时文件
                     try {
@@ -385,9 +390,10 @@ class BilibiliService {
                     
                     // 发送合并后的文件
                     const stats = fs.statSync(outputFile);
-                    res.setHeader('Content-Type', 'video/mp4');
+                    const contentType = this.getContentType(format);
+                    res.setHeader('Content-Type', contentType);
                     res.setHeader('Content-Length', stats.size);
-                    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.mp4"`);
+                    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.${format}"`);
                     
                     const fileStream = fs.createReadStream(outputFile);
                     fileStream.pipe(res);
@@ -404,10 +410,33 @@ class BilibiliService {
             }
             
             // 如果没有音频或没有 ffmpeg，只发送视频
+            // 如果指定了格式且不是 m4s，尝试转换
+            if (format !== 'm4s' && format !== 'mp4') {
+                const hasFfmpeg = await this.checkFfmpeg();
+                if (hasFfmpeg) {
+                    const convertedFile = path.join(this.downloadDir, `${safeTitle}.${format}`);
+                    await this.convertVideoFormat(videoFile, convertedFile, format);
+                    const stats = fs.statSync(convertedFile);
+                    const contentType = this.getContentType(format);
+                    res.setHeader('Content-Type', contentType);
+                    res.setHeader('Content-Length', stats.size);
+                    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.${format}"`);
+                    const fileStream = fs.createReadStream(convertedFile);
+                    fileStream.pipe(res);
+                    fileStream.on('end', () => {
+                        setTimeout(() => {
+                            try { fs.unlinkSync(convertedFile); fs.unlinkSync(videoFile); } catch (e) {}
+                        }, 5000);
+                    });
+                    return;
+                }
+            }
+            
             const stats = fs.statSync(videoFile);
-            res.setHeader('Content-Type', 'video/mp4');
+            const contentType = format === 'm4s' ? 'video/mp4' : this.getContentType(format);
+            res.setHeader('Content-Type', contentType);
             res.setHeader('Content-Length', stats.size);
-            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.mp4"`);
+            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(safeTitle)}.${format === 'm4s' ? 'mp4' : format}"`);
             
             const fileStream = fs.createReadStream(videoFile);
             fileStream.pipe(res);
@@ -510,14 +539,21 @@ class BilibiliService {
 
     /**
      * 使用 ffmpeg 合并视频和音频
+     * @param {string} videoPath - 视频文件路径
+     * @param {string} audioPath - 音频文件路径
+     * @param {string} outputPath - 输出文件路径
+     * @param {string} format - 输出格式 (mp4, flv, mkv, webm)
      */
-    async mergeVideoAudio(videoPath, audioPath, outputPath) {
+    async mergeVideoAudio(videoPath, audioPath, outputPath, format = 'mp4') {
         return new Promise((resolve, reject) => {
+            // 根据格式选择编码器
+            const formatConfig = this.getFormatConfig(format);
+            
             const args = [
                 '-i', videoPath,
                 '-i', audioPath,
-                '-c:v', 'copy',
-                '-c:a', 'aac',
+                '-c:v', formatConfig.videoCodec,
+                '-c:a', formatConfig.audioCodec,
                 '-y',
                 outputPath
             ];
