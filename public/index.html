@@ -766,6 +766,40 @@
                             </div>
                         </div>
 
+                        <!-- 视频格式行（仅在需要视频时显示） -->
+                        <div class="mini-segment" id="videoFormatSegment" style="display: none;">
+                            <div class="glider"></div>
+                            <div class="segment-opt active" data-val="mp4" onclick="setPreset('videoFormat', 'mp4', this)">
+                                MP4
+                            </div>
+                            <div class="segment-opt" data-val="flv" onclick="setPreset('videoFormat', 'flv', this)">
+                                FLV
+                            </div>
+                            <div class="segment-opt" data-val="mkv" onclick="setPreset('videoFormat', 'mkv', this)">
+                                MKV
+                            </div>
+                            <div class="segment-opt" data-val="webm" onclick="setPreset('videoFormat', 'webm', this)">
+                                WebM
+                            </div>
+                        </div>
+
+                        <!-- 音频格式行（仅在需要音频时显示） -->
+                        <div class="mini-segment" id="audioFormatSegment" style="display: none;">
+                            <div class="glider"></div>
+                            <div class="segment-opt active" data-val="mp3" onclick="setPreset('audioFormat', 'mp3', this)">
+                                MP3
+                            </div>
+                            <div class="segment-opt" data-val="flac" onclick="setPreset('audioFormat', 'flac', this)">
+                                FLAC
+                            </div>
+                            <div class="segment-opt" data-val="aac" onclick="setPreset('audioFormat', 'aac', this)">
+                                AAC
+                            </div>
+                            <div class="segment-opt" data-val="m4a" onclick="setPreset('audioFormat', 'm4a', this)">
+                                M4A
+                            </div>
+                        </div>
+
                         <!-- 画质行 -->
                         <div class="mini-segment quality-mode" id="qualitySegment">
                             <div class="glider"></div>

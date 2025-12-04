@@ -13,6 +13,8 @@ const GIST_CONFIG = {
 let appState = {
     format: localStorage.getItem('preset_format') || 'video+audio',
     quality: parseInt(localStorage.getItem('preset_quality') || '80'),
+    videoFormat: localStorage.getItem('preset_videoFormat') || 'mp4',
+    audioFormat: localStorage.getItem('preset_audioFormat') || 'mp3',
     theme: localStorage.getItem('theme') || 'light',
     filenameFormat: localStorage.getItem('filename_format') || 'title'
 };
@@ -110,6 +112,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // 检查登录状态
     checkLoginStatus();
     checkLogin(); // 新 HTML 使用这个函数
+    
+    // 恢复上次的解析搜索结果（保持登录/退出后的状态）
+    restoreLastParseResult();
     
     // 加载历史记录到下拉菜单
     loadHistoryToDropdown();
@@ -1703,16 +1708,18 @@ function startQRCodeCheck(qrcodeKey) {
                         break;
                     case 'confirmed':
                         clearInterval(qrCheckInterval);
-                        updateQrStatus('success', '登录成功！正在刷新页面...');
+                        updateQrStatus('success', '登录成功！');
                         isLoggedIn = true;
                         isVip = data.isVip || false;
                         userInfo = data.userInfo;
+                        
+                        // 更新UI但不刷新页面（保持搜索结果）
+                        updateLoginUI();
+                        closeLoginModal();
+                        
                         showToast('登录成功！', 'success');
                         
-                        // 1.5秒后刷新页面
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 1500);
+                        // 不再刷新页面，保持解析搜索结果
                         break;
                     case 'expired':
                         clearInterval(qrCheckInterval);
@@ -1746,12 +1753,12 @@ async function logout() {
     isVip = false;
     userInfo = null;
     
-    showToast('已退出登录，正在刷新页面...', 'success');
+    // 更新UI但不刷新页面（保持搜索结果）
+    updateLoginUI();
     
-    // 1秒后刷新页面
-    setTimeout(() => {
-        window.location.reload();
-    }, 1000);
+    showToast('已退出登录', 'success');
+    
+    // 不再刷新页面，保持解析搜索结果
 }
 
 // 解析视频 (保留为兼容方法，实际使用 handleSmartParse)
@@ -2390,6 +2397,28 @@ function initUI() {
                 setPreset('quality', 80, defaultQBtn);
             }
         }
+
+        // 恢复视频格式选择
+        const vfBtn = document.querySelector(`#videoFormatSegment .segment-opt[data-val="${appState.videoFormat}"]`);
+        if(vfBtn) {
+            setPreset('videoFormat', appState.videoFormat, vfBtn);
+        } else {
+            const defaultVfBtn = document.querySelector(`#videoFormatSegment .segment-opt[data-val="mp4"]`);
+            if(defaultVfBtn) {
+                setPreset('videoFormat', 'mp4', defaultVfBtn);
+            }
+        }
+
+        // 恢复音频格式选择
+        const afBtn = document.querySelector(`#audioFormatSegment .segment-opt[data-val="${appState.audioFormat}"]`);
+        if(afBtn) {
+            setPreset('audioFormat', appState.audioFormat, afBtn);
+        } else {
+            const defaultAfBtn = document.querySelector(`#audioFormatSegment .segment-opt[data-val="mp3"]`);
+            if(defaultAfBtn) {
+                setPreset('audioFormat', 'mp3', defaultAfBtn);
+            }
+        }
         
         // 设置文件名格式
         const filenameFormatEl = document.getElementById('filenameFormat');
@@ -2434,19 +2463,71 @@ function setPreset(type, val, btn) {
     moveGlider(container, btn);
 
     if (type === 'format') {
+        // 更新格式相关的显示逻辑
         const qRow = document.getElementById('qualitySegment');
-        if (qRow) {
-            if (val === 'cover' || val === 'audio') {
-                qRow.style.opacity = '0.5';
-                qRow.style.pointerEvents = 'none';
-            } else {
-                qRow.style.opacity = '1';
-                qRow.style.pointerEvents = 'auto';
+        const vfRow = document.getElementById('videoFormatSegment');
+        const afRow = document.getElementById('audioFormatSegment');
+        
+        if (val === 'cover') {
+            // 封面：隐藏所有格式和画质选择
+            if (qRow) { qRow.style.display = 'none'; }
+            if (vfRow) { vfRow.style.display = 'none'; }
+            if (afRow) { afRow.style.display = 'none'; }
+        } else if (val === 'audio') {
+            // 仅音频：显示音频格式，隐藏视频格式和画质
+            if (qRow) { qRow.style.display = 'none'; }
+            if (vfRow) { vfRow.style.display = 'none'; }
+            if (afRow) { 
+                afRow.style.display = 'flex';
                 setTimeout(() => {
-                    const activeQ = document.querySelector('#qualitySegment .segment-opt.active');
-                    if(activeQ) moveGlider(document.getElementById('qualitySegment'), activeQ);
+                    const activeAf = document.querySelector('#audioFormatSegment .segment-opt.active');
+                    if(activeAf) moveGlider(afRow, activeAf);
                 }, 10);
             }
+        } else if (val === 'video-only') {
+            // 纯画面：显示视频格式和画质，隐藏音频格式
+            if (qRow) { 
+                qRow.style.display = 'flex';
+                qRow.style.opacity = '1';
+                qRow.style.pointerEvents = 'auto';
+            }
+            if (vfRow) { 
+                vfRow.style.display = 'flex';
+                setTimeout(() => {
+                    const activeVf = document.querySelector('#videoFormatSegment .segment-opt.active');
+                    if(activeVf) moveGlider(vfRow, activeVf);
+                }, 10);
+            }
+            if (afRow) { afRow.style.display = 'none'; }
+            setTimeout(() => {
+                const activeQ = document.querySelector('#qualitySegment .segment-opt.active');
+                if(activeQ) moveGlider(qRow, activeQ);
+            }, 10);
+        } else {
+            // video+audio 或 video+audio-separate：显示所有相关选项
+            if (qRow) { 
+                qRow.style.display = 'flex';
+                qRow.style.opacity = '1';
+                qRow.style.pointerEvents = 'auto';
+            }
+            if (vfRow) { 
+                vfRow.style.display = 'flex';
+                setTimeout(() => {
+                    const activeVf = document.querySelector('#videoFormatSegment .segment-opt.active');
+                    if(activeVf) moveGlider(vfRow, activeVf);
+                }, 10);
+            }
+            if (afRow) { 
+                afRow.style.display = 'flex';
+                setTimeout(() => {
+                    const activeAf = document.querySelector('#audioFormatSegment .segment-opt.active');
+                    if(activeAf) moveGlider(afRow, activeAf);
+                }, 10);
+            }
+            setTimeout(() => {
+                const activeQ = document.querySelector('#qualitySegment .segment-opt.active');
+                if(activeQ) moveGlider(qRow, activeQ);
+            }, 10);
         }
     }
 
@@ -2473,6 +2554,17 @@ function moveGlider(container, targetBtn) {
 function showSingleResult(data) {
     currentData = data;
     currentVideoData = data; // 兼容旧代码
+    
+    // 保存搜索结果到localStorage（保持登录/退出后的状态）
+    try {
+        localStorage.setItem('lastParseResult', JSON.stringify(data));
+        const currentUrl = videoUrlInput ? videoUrlInput.value.trim() : '';
+        if (currentUrl) {
+            localStorage.setItem('lastParseUrl', currentUrl);
+        }
+    } catch (e) {
+        console.warn('保存解析结果失败:', e);
+    }
     
     const resultSection = document.getElementById('resultSection');
     if (!resultSection) return;
@@ -2512,6 +2604,30 @@ function showSingleResult(data) {
     }
     
     updateDownloadHint();
+}
+
+// 恢复上次的解析搜索结果（保持登录/退出后的状态）
+function restoreLastParseResult() {
+    try {
+        const savedResult = localStorage.getItem('lastParseResult');
+        const savedUrl = localStorage.getItem('lastParseUrl');
+        
+        if (savedResult && savedUrl) {
+            const data = JSON.parse(savedResult);
+            
+            // 恢复URL输入
+            if (videoUrlInput) {
+                videoUrlInput.value = savedUrl;
+            }
+            
+            // 恢复搜索结果显示
+            showSingleResult(data);
+            
+            console.log('已恢复上次的解析搜索结果');
+        }
+    } catch (e) {
+        console.warn('恢复解析结果失败:', e);
+    }
 }
 
 // 更新下载提示（新 HTML 使用）
@@ -3029,39 +3145,37 @@ function clearBatch() {
 
 // ==================== 背景图系统 (二次元美少女) ====================
 
-// 背景图配置 - 二次元美少女图片
+// 背景图配置 - 二次元美少女图片（支持本地图片）
 const bgConfig = {
-    // 白天：明亮风格的二次元美少女
-    day: [
+    // 统一背景图池（不区分白天黑夜，3分钟自动切换）
+    images: [
         // 本地图片（推荐）：把喜欢的图放在 public/images/ 下
-        // 'images/day1.jpg', 
-        // 'images/day2.jpg',
+        // 取消注释并添加你的本地图片路径：
+        // 'images/bg1.jpg',
+        // 'images/bg2.jpg',
+        // 'images/bg3.jpg',
+        // 在线API（备用）
         'https://api.ixiaowai.cn/gqapi/gqapi.php', // 风景/二次元API
         'https://img.paulzzh.com/touhou/random', // 东方Project随机图 (质量高)
         'https://www.dmoe.cc/random.php', // 随机二次元美少女
-    ],
-    // 黑夜：暗色风格的二次元美少女
-    night: [
-        // 'images/night1.jpg',
         'https://api.ixiaowai.cn/api/api.php', // 综合随机二次元
-        'https://www.dmoe.cc/random.php', // 随机二次元美少女
-        'https://img.paulzzh.com/touhou/random', // 东方Project
     ],
     // 轮换间隔（毫秒）：3分钟 = 180000ms
-    rotateInterval: 180000
+    rotateInterval: 180000,
+    // 当前使用的图片索引
+    currentIndex: 0
 };
 
 // 背景图轮换定时器
 let bgRotateTimer = null;
 
-// 更新背景图逻辑（优化版：配合CSS粉色遮罩）
-function updateBackgroundImage(theme) {
+// 更新背景图逻辑（不随主题切换，3分钟自动轮换）
+function updateBackgroundImage() {
     const bgElement = document.getElementById('backgroundImage');
-    if (!bgElement) return;
+    if (!bgElement || !bgConfig.images || bgConfig.images.length === 0) return;
 
-    const sources = theme === 'light' ? bgConfig.day : bgConfig.night;
-    // 随机选择一张
-    let url = sources[Math.floor(Math.random() * sources.length)];
+    // 按顺序选择图片（循环）
+    let url = bgConfig.images[bgConfig.currentIndex];
     
     // 如果是API链接，添加时间戳防止缓存
     if (url.startsWith('http')) {
@@ -3078,19 +3192,27 @@ function updateBackgroundImage(theme) {
         // 清除内联样式，让CSS类控制效果
         bgElement.style.opacity = '';
         bgElement.style.filter = '';
+        
+        // 更新索引，下次使用下一张
+        bgConfig.currentIndex = (bgConfig.currentIndex + 1) % bgConfig.images.length;
     };
 
     img.onerror = () => {
-        console.warn('背景图加载失败，使用淡粉色渐变');
-        // 加载失败时使用粉色渐变作为优雅降级
-        if(theme === 'light') {
-            bgElement.style.backgroundImage = 'linear-gradient(135deg, #ffeef5 0%, #fff0f5 50%, #ffe4ec 100%)';
+        console.warn('背景图加载失败，跳过到下一张');
+        // 加载失败时跳过到下一张
+        bgConfig.currentIndex = (bgConfig.currentIndex + 1) % bgConfig.images.length;
+        // 如果还有图片，尝试加载下一张
+        if (bgConfig.images.length > 0) {
+            setTimeout(() => updateBackgroundImage(), 1000);
         } else {
-            bgElement.style.backgroundImage = 'linear-gradient(135deg, #2d1934 0%, #231428 50%, #321937 100%)';
+            // 没有可用图片时使用渐变
+            const isDark = document.body.classList.contains('dark-theme');
+            if(isDark) {
+                bgElement.style.backgroundImage = 'linear-gradient(135deg, #2d1934 0%, #231428 50%, #321937 100%)';
+            } else {
+                bgElement.style.backgroundImage = 'linear-gradient(135deg, #ffeef5 0%, #fff0f5 50%, #ffe4ec 100%)';
+            }
         }
-        // 清除内联样式
-        bgElement.style.opacity = '';
-        bgElement.style.filter = '';
     };
 }
 
@@ -3100,6 +3222,8 @@ function toggleTheme() {
         appState = {
             format: localStorage.getItem('preset_format') || 'video+audio',
             quality: parseInt(localStorage.getItem('preset_quality') || '80'),
+            videoFormat: localStorage.getItem('preset_videoFormat') || 'mp4',
+            audioFormat: localStorage.getItem('preset_audioFormat') || 'mp3',
             theme: localStorage.getItem('theme') || 'light',
             filenameFormat: localStorage.getItem('filename_format') || 'title'
         };
@@ -3119,9 +3243,7 @@ function toggleTheme() {
     appState.theme = newTheme;
     localStorage.setItem('theme', appState.theme);
     
-    // 切换背景图并重置轮换定时器
-    updateBackgroundImage(newTheme);
-    startBackgroundRotation(); // 重置轮换计时
+    // 注意：背景图不再随主题切换，保持3分钟自动轮换
     
     // 同步到旧变量（兼容）
     if (appSettings) {
@@ -3138,22 +3260,19 @@ function initBackgroundImage() {
         return;
     }
     
-    // 获取当前主题
-    let currentTheme = 'light';
-    if (appState && appState.theme) {
-        currentTheme = appState.theme;
-    } else {
-        const isDark = document.body.classList.contains('dark-theme');
-        currentTheme = isDark ? 'dark' : 'light';
+    // 恢复上次的图片索引（从localStorage）
+    const savedIndex = localStorage.getItem('bg_currentIndex');
+    if (savedIndex !== null) {
+        bgConfig.currentIndex = parseInt(savedIndex) || 0;
     }
     
-    // 初始化背景
-    updateBackgroundImage(currentTheme);
+    // 初始化背景（不依赖主题）
+    updateBackgroundImage();
     
     // 启动背景图轮换定时器（每3分钟换一张）
     startBackgroundRotation();
     
-    console.log('背景图已初始化，当前主题:', currentTheme, '，每3分钟轮换');
+    console.log('背景图已初始化，每3分钟自动轮换，不随主题切换');
 }
 
 // 启动背景图轮换
@@ -3163,11 +3282,12 @@ function startBackgroundRotation() {
         clearInterval(bgRotateTimer);
     }
     
-    // 每3分钟轮换一次背景图
+    // 每3分钟轮换一次背景图（不随主题切换）
     bgRotateTimer = setInterval(() => {
-        const currentTheme = appState?.theme || (document.body.classList.contains('dark-theme') ? 'dark' : 'light');
         console.log('背景图轮换中...');
-        updateBackgroundImage(currentTheme);
+        updateBackgroundImage();
+        // 保存当前索引
+        localStorage.setItem('bg_currentIndex', bgConfig.currentIndex.toString());
     }, bgConfig.rotateInterval);
 }
 
