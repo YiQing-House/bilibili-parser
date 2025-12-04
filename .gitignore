@@ -5,8 +5,13 @@ package-lock.json
 # 环境变量
 .env
 .env.local
+.env.*
 # GitHub Token（不要提交到仓库）
 GITHUB_TOKEN
+*.token
+*secret*
+*password*
+*key*
 
 # 日志
 *.log
@@ -41,4 +46,10 @@ downloads/
 test/
 *.m4s
 *.mp4
+
+# 敏感信息文件
+设置Token.bat
+*.credentials
+*config.local*
+*secrets*
 
