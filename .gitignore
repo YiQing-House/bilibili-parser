@@ -57,10 +57,13 @@ test/
 *.md
 !README.md
 
-# 批处理文件和脚本（本地使用，不提交）
-*.bat
-更新GitHub用户名.bat
-清理Git历史.bat
+# 批处理文件和脚本
+# 开发者工具脚本（不提交）
 推送到GitHub.bat
+更新GitHub用户名.bat
+更新公告.bat
+清理Git历史.bat
+设置Token.bat
 推送命令.txt
+update-announcement.js
 
