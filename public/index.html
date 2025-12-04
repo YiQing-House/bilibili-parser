@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>b站解析助手@2025</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* ==================== 核心变量 (蜜桃奶茶 + 暗樱粉主题) ==================== */
+        :root {
+            --primary: #E8836B; /* 蜜桃珊瑚粉 */
+            --primary-hover: #D4705A;
+            --blue: #5BA3C0; /* 柔和的蓝 */
+            --text-main: #5D4E4A; /* 深棕色文字 */
+            --text-gray: #8B7D78;
+            
+            /* 白天主题：奶茶粉色毛玻璃（更透明，能看到背景轮廓） */
+            --bg-body: #F5E6E0;
+            --bg-card: rgba(245, 228, 222, 0.35); /* 更透明！ */
+            --bg-input: rgba(242, 225, 218, 0.30); /* 输入框更透明！ */
+            --bg-bar: rgba(248, 235, 228, 0.4);
+            --border: rgba(200, 150, 140, 0.3);
+            
+            --radius: 16px;
+            --shadow: 0 8px 32px rgba(180, 130, 120, 0.1);
+            --shadow-float: 0 8px 32px rgba(232, 131, 107, 0.18);
+            --ease: cubic-bezier(0.25, 0.8, 0.25, 1);
+            
+            /* 毛玻璃模糊度（降低，让背景更清晰） */
+            --backdrop-blur: blur(12px);
+        }
+
+        /* 🌸 暗樱粉夜间主题 - 深玫红+暗粉，优雅护眼 */
+        body.dark-theme {
+            --primary: #FF9BB8; /* 樱花粉 */
+            --blue: #7ECCE8; /* 柔和天蓝 */
+            --text-main: #F8EDF2;
+            --text-gray: #D4B8C8;
+            
+            /* 暗樱粉毛玻璃（透明度高，能看到背景） */
+            --bg-body: #1C0E18; /* 深玫红底 */
+            --bg-card: rgba(45, 22, 38, 0.38); /* 更透明！ */
+            --bg-input: rgba(38, 18, 32, 0.35); /* 更透明！ */
+            --bg-bar: rgba(50, 25, 42, 0.4);
+            --border: rgba(255, 155, 184, 0.25); /* 樱粉边框 */
+            --shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+        
+        body {
+            background: var(--bg-body);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            transition: background 0.3s;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        /* 1. 背景图容器 - 二次元美少女背景 */
+        .background-image {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -2;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            transition: opacity 0.8s ease, filter 0.8s ease, background-image 0.8s ease;
+        }
+
+        /* 白天主题背景图 - 明显的二次元美少女 */
+        body.light-theme .background-image {
+            opacity: 0.7; /* 提高透明度，让美少女更明显 */
+            filter: blur(3px) brightness(1.05) saturate(1.1);
+        }
+
+        /* 黑夜主题背景图 - 暗色调二次元美少女 */
+        body.dark-theme .background-image {
+            opacity: 0.55; /* 提高透明度 */
+            filter: blur(3px) brightness(0.7) saturate(1.0);
+        }
+
+
+        /* 背景遮罩层 - 淡粉色毛玻璃遮罩 */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            transition: background 0.5s ease;
+            pointer-events: none;
+        }
+
+        /* 白天：奶茶粉半透明遮罩（更透明，背景清晰可见） */
+        body.light-theme::before {
+            background: linear-gradient(
+                135deg, 
+                rgba(245, 230, 222, 0.35) 0%,    /* 奶茶粉 */
+                rgba(248, 235, 228, 0.30) 30%,   /* 浅奶茶 */
+                rgba(242, 228, 220, 0.35) 60%,   /* 蜜桃奶茶 */
+                rgba(245, 230, 222, 0.35) 100%
+            );
+        }
+
+        /* 🌸 黑夜：暗樱粉半透明遮罩（背景清晰可见） */
+        body.dark-theme::before {
+            background: linear-gradient(
+                135deg, 
+                rgba(35, 15, 28, 0.45) 0%,       /* 深玫红 */
+                rgba(28, 12, 22, 0.40) 30%,      /* 暗樱色 */
+                rgba(38, 18, 30, 0.45) 60%,      /* 深玫瑰 */
+                rgba(32, 14, 25, 0.45) 100%
+            );
+        }
+
+        .container {
+            width: 100%;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            flex: 1;
+        }
+
+        /* ==================== 关键样式更新 ==================== */
+
+        /* 2. 给所有卡片添加毛玻璃效果 */
+        .header, 
+        .main-card .super-search-box, 
+        .result-card, 
+        .batch-item, 
+        .settings-sidebar,
+        .modal-content,
+        .history-dropdown,
+        .footer {
+            backdrop-filter: var(--backdrop-blur); /* 核心：背景模糊 */
+            -webkit-backdrop-filter: var(--backdrop-blur); /* Safari 支持 */
+            border: 1px solid var(--border); /* 加上淡淡的边框 */
+        }
+
+        /* ==================== 头部 ==================== */
+        /* 3. 头部特殊处理：更通透 */
+        .header {
+            background: rgba(248, 235, 228, 0.45); /* 奶茶粉，更透明 */
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(180, 130, 120, 0.06);
+            backdrop-filter: var(--backdrop-blur);
+            -webkit-backdrop-filter: var(--backdrop-blur);
+            border-bottom: 1px solid var(--border);
+        }
+
+        body.dark-theme .header {
+            background: rgba(40, 20, 35, 0.45); /* 暗樱粉，更透明 */
+        }
+
+        /* 登录弹窗暗色模式 */
+        body.dark-theme #loginModal > div {
+            background: rgba(35, 25, 32, 0.98) !important;
+            border: 1px solid rgba(255, 155, 184, 0.2);
+        }
+        body.dark-theme #loginModal > div h3 {
+            color: var(--primary) !important;
+        }
+        body.dark-theme #loginModal > div > div:first-of-type {
+            background: rgba(255, 255, 255, 0.95) !important; /* 二维码区保持白色 */
+            border-color: rgba(255, 155, 184, 0.3) !important;
+        }
+        body.dark-theme #loginModal > div p {
+            color: var(--text-gray) !important;
+        }
+        body.dark-theme #loginModal > div button:last-child {
+            background: rgba(50, 35, 45, 0.8) !important;
+            border-color: rgba(255, 155, 184, 0.3) !important;
+            color: var(--text-main) !important;
+        }
+        
+        .header-inner {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo { color: var(--primary); font-size: 1.5rem; display: flex; align-items: center; gap: 8px; text-decoration: none; }
+        .logo span { font-size: 1rem; font-weight: 700; color: var(--text-main); letter-spacing: 1px; }
+
+        .user-area button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 6px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: 0.2s;
+        }
+        .user-area button:hover { opacity: 0.9; }
+
+        .user-info-display {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--bg-bar);
+            padding: 4px 10px;
+            border-radius: 20px;
+        }
+        .user-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; }
+        .user-name { font-size: 0.9rem; font-weight: 500; }
+        .vip-badge { 
+            font-size: 0.7rem; 
+            background: linear-gradient(135deg, #FB7299 0%, #FF9B8B 100%); 
+            color: white; 
+            padding: 2px 8px; 
+            border-radius: 10px; 
+            font-weight: 600;
+            box-shadow: 0 2px 6px rgba(251, 114, 153, 0.3);
+        }
+        .vip-badge.normal { 
+            background: linear-gradient(135deg, #9CA3AF 0%, #6B7280 100%); 
+            box-shadow: 0 2px 6px rgba(107, 114, 128, 0.3);
+        }
+
+        /* ==================== 免责声明栏 ==================== */
+        .disclaimer-bar {
+            background: rgba(251, 114, 153, 0.1);
+            color: var(--primary);
+            padding: 12px 15px;
+            border-radius: var(--radius);
+            margin-bottom: 20px;
+            border: 1px solid rgba(251, 114, 153, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.9rem;
+            overflow: hidden; /* 关键：隐藏溢出的滚动文字 */
+        }
+
+        .disclaimer-icon {
+            flex-shrink: 0;
+            animation: swing 2s ease-in-out infinite;
+            font-size: 1.1rem;
+        }
+
+        @keyframes swing {
+            0%, 100% { transform: rotate(0deg); }
+            20% { transform: rotate(15deg); }
+            40% { transform: rotate(-10deg); }
+            60% { transform: rotate(5deg); }
+            80% { transform: rotate(-5deg); }
+        }
+
+        .marquee-container {
+            flex: 1;
+            overflow: hidden;
+            white-space: nowrap;
+            position: relative;
+        }
+
+        .marquee-text {
+            display: inline-block;
+            animation: marquee 20s linear infinite;
+            padding-left: 100%; /* 从最右侧开始 */
+        }
+
+        @keyframes marquee {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-100%); }
+        }
+
+        /* ==================== 超级搜索框 (一体化设计) ==================== */
+        .main-card {
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        .super-search-box {
+            background: var(--bg-card);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border); /* 使用统一的边框样式 */
+            transition: all 0.3s var(--ease);
+            position: relative;
+            overflow: visible; /* 允许下拉菜单溢出 */
+            backdrop-filter: var(--backdrop-blur);
+            -webkit-backdrop-filter: var(--backdrop-blur);
+        }
+
+        /* 聚焦时的光晕效果 */
+        .super-search-box:focus-within {
+            border-color: var(--blue);
+            box-shadow: 0 0 0 4px rgba(0, 174, 236, 0.15);
+        }
+
+        /* 上半部分：纯文本区域 */
+        .input-area {
+            position: relative;
+            padding: 20px 20px 5px 20px;
+        }
+
+        /* 4. 输入框去白底，增强融合感 */
+        .url-input {
+            width: 100%;
+            height: 80px;
+            border: none;
+            padding: 0;
+            font-size: 1.05rem;
+            background: transparent;
+            color: var(--text-main);
+            text-shadow: 0 1px 2px rgba(0,0,0,0.05); /* 增加文字立体感 */
+            resize: none;
+            outline: none;
+            line-height: 1.6;
+        }
+        .url-input::placeholder { 
+            color: var(--text-gray); 
+            opacity: 0.8; 
+        }
+
+        /* 右下角工具栏 (历史记录) */
+        .input-tools {
+            display: flex;
+            justify-content: flex-end;
+            padding: 0 20px 10px 20px;
+        }
+
+        .history-trigger {
+            background: transparent;
+            border: none;
+            color: var(--text-gray);
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            transition: 0.2s;
+        }
+        .history-trigger:hover {
+            color: var(--blue);
+            background: var(--bg-input);
+        }
+
+        /* 下半部分：控制面板 (预设+按钮) */
+        .control-panel {
+            background: var(--bg-input);
+            border-top: 1px solid var(--border);
+            padding: 15px 20px;
+            border-radius: 0 0 var(--radius) var(--radius);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 20px;
+        }
+
+        .preset-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            /* 允许内容横向滚动 */
+            min-width: 0; 
+        }
+
+        /* 紧凑型滑动条 */
+        .mini-segment {
+            position: relative;
+            display: flex;
+            background: var(--bg-card); /* 反色：面板是灰的，条是白的 */
+            border-radius: 6px;
+            padding: 3px;
+            user-select: none;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            /* 支持横向滚动 */
+            overflow-x: auto;
+            scrollbar-width: none; /* Firefox */
+        }
+        .mini-segment::-webkit-scrollbar { display: none; /* Chrome/Safari */ }
+
+        .glider {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            bottom: 3px;
+            background: var(--blue); /* 选中色 */
+            border-radius: 4px;
+            transition: all 0.3s var(--ease);
+            z-index: 1;
+            width: 0;
+            opacity: 0.15; /* 提高可见度 */
+        }
+        /* 选中状态的高亮逻辑 */
+        .mini-segment.quality-mode .glider { 
+            background: var(--primary);
+            opacity: 0.15; /* 提高可见度 */
+        }
+
+        .segment-opt {
+            position: relative;
+            z-index: 2;
+            flex: 1;
+            text-align: center;
+            padding: 4px 8px;
+            font-size: 0.85rem;
+            color: var(--text-gray);
+            cursor: pointer;
+            transition: color 0.3s;
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            min-width: 60px; /* 防止挤压 */
+        }
+
+        .segment-opt:hover { color: var(--text-main); }
+        
+        .segment-opt.active { 
+            color: var(--blue) !important; 
+            font-weight: 600; 
+        }
+        
+        /* 针对画质行的选中色 */
+        .mini-segment.quality-mode .segment-opt.active { 
+            color: var(--primary) !important; 
+        }
+
+        .vip-tag {
+            font-size: 0.6rem;
+            background: var(--primary);
+            color: white;
+            padding: 0px 3px;
+            border-radius: 2px;
+            opacity: 0.6;
+            transform: scale(0.9);
+        }
+        .segment-opt.active .vip-tag { opacity: 1; }
+
+        /* 解析按钮 */
+        .parse-btn {
+            background: var(--blue);
+            color: white;
+            border: none;
+            padding: 0 25px;
+            height: 46px; /* 与两行预设高度匹配 */
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+            box-shadow: 0 4px 12px rgba(0, 174, 236, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .parse-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0, 174, 236, 0.4);
+            filter: brightness(1.05);
+        }
+
+        /* 历史记录下拉面板 */
+        .history-dropdown {
+            position: absolute;
+            top: 100px; /* 约在 input 区域下方 */
+            right: 20px;
+            width: 300px;
+            background: var(--bg-card);
+            border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            border: 1px solid var(--border);
+            z-index: 50;
+            opacity: 0;
+            transform: translateY(-10px);
+            pointer-events: none;
+            transition: all 0.2s var(--ease);
+            backdrop-filter: var(--backdrop-blur);
+            -webkit-backdrop-filter: var(--backdrop-blur);
+        }
+
+        .history-dropdown.active {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        .history-header {
+            padding: 10px 15px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: var(--text-gray);
+            background: var(--bg-bar);
+            border-radius: 8px 8px 0 0;
+        }
+
+        .history-items { max-height: 250px; overflow-y: auto; }
+        
+        .history-row {
+            padding: 10px 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            transition: 0.2s;
+            border-bottom: 1px solid var(--bg-input);
+        }
+        .history-row:hover { background: var(--bg-input); }
+        .history-row-content { flex: 1; min-width: 0; }
+        .history-row-title { font-size: 0.85rem; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .history-row-meta { font-size: 0.75rem; color: var(--text-gray); }
+        .history-row-delete { color: var(--text-gray); cursor: pointer; padding: 4px; }
+        .history-row-delete:hover { color: #FF6699; }
+
+        /* ==================== 进度条区域 ==================== */
+        .progress-section {
+            background: var(--bg-bar);
+            border-radius: var(--radius);
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid var(--border);
+            margin-top: 20px;
+        }
+        .progress-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 0.9rem; color: var(--text-main); }
+        .progress-track { height: 8px; background: #ddd; border-radius: 4px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--blue); width: 0%; transition: width 0.3s; }
+        .progress-info { font-size: 0.8rem; color: var(--text-gray); margin-top: 5px; text-align: right; }
+
+        /* ==================== 结果卡片 ==================== */
+        /* 5. 结果卡片优化 */
+        .result-card {
+            background: var(--bg-card); /* 使用半透明背景 */
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 20px;
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 25px;
+            animation: slideIn 0.3s ease;
+            backdrop-filter: var(--backdrop-blur);
+            -webkit-backdrop-filter: var(--backdrop-blur);
+            border: 1px solid var(--border);
+        }
+
+        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        .cover-box {
+            position: relative;
+            border-radius: 6px;
+            overflow: hidden;
+            aspect-ratio: 16/10;
+            background: #000;
+        }
+        .cover-box img { width: 100%; height: 100%; object-fit: cover; }
+        .cover-overlay {
+            position: absolute; inset: 0; background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;
+            opacity: 0; transition: 0.2s; color: white; font-size: 3rem;
+        }
+        .cover-box:hover .cover-overlay { opacity: 1; }
+        
+        .info-box { display: flex; flex-direction: column; justify-content: space-between; }
+        .video-title { font-size: 1.2rem; font-weight: 700; line-height: 1.4; margin-bottom: 10px; }
+        .video-meta { display: flex; gap: 15px; color: var(--text-gray); font-size: 0.9rem; margin-bottom: 15px; }
+        
+        .download-btn {
+            width: 100%;
+            background: linear-gradient(135deg, var(--primary), #FF8EB3);
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+            margin-top: auto;
+            box-shadow: 0 4px 12px rgba(251, 114, 153, 0.3);
+        }
+        .download-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 15px rgba(251, 114, 153, 0.4); }
+
+        /* ==================== 批量列表 ==================== */
+        .batch-list { margin-top: 15px; max-height: 400px; overflow-y: auto; }
+        .batch-item {
+            background: var(--bg-card);
+            padding: 12px;
+            border-radius: var(--radius);
+            margin-bottom: 10px;
+            display: flex;
+            gap: 15px;
+            border: 1px solid var(--border);
+            align-items: center;
+        }
+        .batch-thumb { width: 100px; height: 56px; border-radius: 4px; object-fit: cover; background: #eee; }
+        .batch-info { flex: 1; min-width: 0; }
+        .batch-title { font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+        .batch-status { font-size: 0.8rem; color: var(--text-gray); display: flex; align-items: center; gap: 5px; }
+        .batch-status.success { color: #10B981; }
+        .batch-status.error { color: #F59E0B; }
+
+        /* 侧边设置栏 */
+        .settings-sidebar {
+            position: fixed; top: 0; right: 0; bottom: 0; width: 300px; background: var(--bg-card);
+            box-shadow: -5px 0 20px rgba(0,0,0,0.1); z-index: 1000; transform: translateX(100%); transition: 0.3s;
+            padding: 20px; display: flex; flex-direction: column;
+        }
+        .settings-sidebar.active { transform: translateX(0); }
+        .settings-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+        .settings-group { margin-bottom: 20px; }
+        .settings-label { display: block; font-size: 0.9rem; color: var(--text-gray); margin-bottom: 8px; }
+        .settings-select { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-bar); color: var(--text-main); }
+
+        /* 公告弹窗 */
+        .modal { position: fixed; inset: 0; z-index: 1100; display: flex; align-items: center; justify-content: center; }
+        .modal-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(3px); }
+        .modal-content { 
+            position: relative; 
+            background: var(--bg-card); 
+            width: 90%; 
+            max-width: 450px; 
+            border-radius: var(--radius); 
+            box-shadow: var(--shadow-float); 
+            overflow: hidden; 
+            animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            backdrop-filter: var(--backdrop-blur);
+            -webkit-backdrop-filter: var(--backdrop-blur);
+            border: 1px solid var(--border);
+        }
+        @keyframes popIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .modal-header { padding: 15px 20px; background: linear-gradient(135deg, var(--primary), #FF8EB3); color: white; display: flex; justify-content: space-between; align-items: center; }
+        .modal-body { padding: 25px; max-height: 60vh; overflow-y: auto; }
+        
+        .modal-footer {
+            padding: 15px 20px;
+            background: var(--bg-input);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid var(--border);
+        }
+        
+        .dont-show-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: var(--text-gray);
+            cursor: pointer;
+        }
+        
+        .dont-show-option input {
+            accent-color: var(--primary);
+            width: 16px;
+            height: 16px;
+        }
+
+        /* 通用 */
+        .footer { text-align: center; padding: 30px; color: var(--text-gray); font-size: 0.85rem; }
+        .float-btns { position: fixed; bottom: 30px; right: 30px; display: flex; flex-direction: column; gap: 10px; z-index: 90; }
+        .float-btn { width: 45px; height: 45px; border-radius: 50%; border: none; background: var(--blue); color: white; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.2); transition: 0.2s; font-size: 1.1rem; }
+        .float-btn:hover { transform: scale(1.1); }
+        .float-btn.setting { background: var(--text-main); }
+        .hidden { display: none !important; }
+        .loading-spinner { border: 3px solid var(--bg-bar); border-top: 3px solid var(--primary); border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; display: inline-block; vertical-align: middle; margin-right: 8px;}
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        @media (max-width: 768px) {
+            .result-card { grid-template-columns: 1fr; }
+            .control-panel { flex-direction: column; align-items: stretch; }
+            .parse-btn { height: 40px; justify-content: center; }
+            .history-dropdown { width: auto; left: 20px; top: 90px; }
+        }
+    </style>
+</head>
+<body class="light-theme">
+    <!-- 背景图容器 -->
+    <div class="background-image" id="backgroundImage"></div>
+
+    <header class="header">
+        <div class="header-inner">
+            <a href="#" class="logo"><i class="fab fa-bilibili"></i> <span>b站解析助手@2025</span></a>
+            <div class="user-area">
+                <div id="loginBtnArea">
+                    <button onclick="showLoginModal()">登录 Bilibili</button>
+                </div>
+                <div id="userInfoArea" class="user-info-display hidden">
+                    <img id="headerAvatar" class="user-avatar" src="" alt="User">
+                    <span id="headerName" class="user-name">用户</span>
+                    <span id="headerVipBadge" class="vip-badge hidden">大会员</span>
+                    <i class="fas fa-sign-out-alt" onclick="logout()" style="cursor:pointer; color:var(--text-gray); margin-left:8px;" title="退出登录"></i>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        
+        <!-- 免责声明 -->
+        <div class="disclaimer-bar">
+            <i class="fas fa-bullhorn disclaimer-icon"></i>
+            <div class="marquee-container">
+                <span class="marquee-text">免责声明：本工具仅供技术学习交流，严禁用于商业用途或非法下载版权内容。下载内容请遵循相关法律法规，使用者需自行承担法律责任，与本工具无关。</span>
+            </div>
+        </div>
+
+        <!-- 超级搜索框 -->
+        <div class="main-card">
+            <div class="super-search-box">
+                <!-- 上半部分：输入 -->
+                <div class="input-area">
+                    <textarea id="videoUrl" class="url-input" placeholder="粘贴视频链接、BV号或收藏夹ID (支持批量/换行分隔)"></textarea>
+                </div>
+
+                <!-- 历史记录触发器 -->
+                <div class="input-tools">
+                    <button class="history-trigger" onclick="toggleHistory(event)">
+                        <i class="fas fa-history"></i> 历史记录
+                    </button>
+                </div>
+
+                <!-- 历史记录下拉菜单 -->
+                <div class="history-dropdown" id="historyDropdown">
+                    <div class="history-header">
+                        <span><i class="far fa-clock"></i> 最近解析记录</span>
+                        <span onclick="clearHistory()" style="cursor:pointer; color:#FF6699;">清空</span>
+                    </div>
+                    <div class="history-items" id="historyDropdownList">
+                        <!-- JS 动态填充 -->
+                    </div>
+                </div>
+
+                <!-- 下半部分：内嵌控制面板 -->
+                <div class="control-panel">
+                    <div class="preset-container">
+                        <!-- 格式行 -->
+                        <div class="mini-segment" id="formatSegment">
+                            <div class="glider"></div>
+                            <div class="segment-opt active" data-val="video+audio" onclick="setPreset('format', 'video+audio', this)">
+                                视音完整
+                            </div>
+                            <div class="segment-opt" data-val="video+audio-separate" onclick="setPreset('format', 'video+audio-separate', this)">
+                                视音分离
+                            </div>
+                            <div class="segment-opt" data-val="audio" onclick="setPreset('format', 'audio', this)">
+                                仅音频
+                            </div>
+                            <div class="segment-opt" data-val="video-only" onclick="setPreset('format', 'video-only', this)">
+                                纯画面
+                            </div>
+                            <div class="segment-opt" data-val="cover" onclick="setPreset('format', 'cover', this)">
+                                封面
+                            </div>
+                        </div>
+
+                        <!-- 画质行 -->
+                        <div class="mini-segment quality-mode" id="qualitySegment">
+                            <div class="glider"></div>
+                            <div class="segment-opt" data-val="120" onclick="setPreset('quality', 120, this)">
+                                4K <span class="vip-tag">VIP</span>
+                            </div>
+                            <div class="segment-opt" data-val="116" onclick="setPreset('quality', 116, this)">
+                                1080P60 <span class="vip-tag">VIP</span>
+                            </div>
+                            <div class="segment-opt" data-val="112" onclick="setPreset('quality', 112, this)">
+                                1080P+ <span class="vip-tag">VIP</span>
+                            </div>
+                            <div class="segment-opt active" data-val="80" onclick="setPreset('quality', 80, this)">
+                                1080P
+                            </div>
+                            <div class="segment-opt" data-val="64" onclick="setPreset('quality', 64, this)">
+                                720P
+                            </div>
+                            <div class="segment-opt" data-val="32" onclick="setPreset('quality', 32, this)">
+                                480P
+                            </div>
+                            <div class="segment-opt" data-val="16" onclick="setPreset('quality', 16, this)">
+                                360P
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 统一解析按钮 -->
+                    <button id="parseBtn" class="parse-btn">
+                        <i class="fas fa-search"></i> 解析下载
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="loadingSection" class="hidden" style="text-align: center; margin-top: 30px;">
+            <div class="loading-spinner"></div>
+            <span style="color: var(--text-gray);">正在智能解析...</span>
+        </div>
+
+        <!-- 单视频结果 -->
+        <div id="resultSection" class="result-card hidden">
+            <div class="cover-box">
+                <img id="resCover" src="" alt="Cover">
+                <a id="coverPlayBtn" href="#" target="_blank" class="cover-overlay"><i class="fas fa-play-circle"></i></a>
+            </div>
+            <div class="info-box">
+                <div>
+                    <div class="video-title" id="resTitle">视频标题</div>
+                    <div class="video-meta">
+                        <span id="resAuthor"><i class="fas fa-user"></i> UP主</span>
+                        <span id="resDuration"><i class="far fa-clock"></i> 00:00</span>
+                    </div>
+                </div>
+                <div>
+                    <button class="download-btn" id="downloadBtn" onclick="executeDownload()">
+                        <i class="fas fa-download"></i> 立即下载
+                    </button>
+                    <div style="font-size: 0.8rem; color: var(--text-gray); margin-top: 8px; text-align: center;">
+                        <i class="fas fa-info-circle"></i> 将使用预设: <span id="downloadHint">1080P</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 批量结果与进度条 -->
+        <div id="batchSection" class="hidden">
+            <div style="margin-top: 20px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h3 style="font-size: 1.1rem;">批量结果 (<span id="batchCount">0</span>)</h3>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button onclick="clearBatch()" style="background:transparent; border:1px solid var(--border); padding:8px 15px; border-radius:6px; cursor:pointer; color:var(--text-gray); height:36px; font-size:0.9rem;">清空</button>
+                    <button id="downloadAllBtn" onclick="downloadAllBatch()" class="parse-btn" style="height:36px; font-size:0.9rem;"><i class="fas fa-download"></i> 全部下载</button>
+                </div>
+            </div>
+
+            <!-- 下载进度条 -->
+            <div id="progressSection" class="progress-section hidden">
+                <div class="progress-header">
+                    <span><i class="fas fa-spinner fa-spin"></i> <span id="progressStatus">正在处理...</span></span>
+                    <span id="progressNum">0/0</span>
+                </div>
+                <div class="progress-track">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <div class="progress-info" id="progressInfo">准备中...</div>
+            </div>
+
+            <div id="batchList" class="batch-list"></div>
+        </div>
+
+    </div>
+
+    <footer class="footer">b站解析助手@2025 &copy; 2025</footer>
+
+    <div class="float-btns">
+        <button class="float-btn setting" onclick="toggleSettings()"><i class="fas fa-cog"></i></button>
+        <button class="float-btn announcement-btn" onclick="checkAnnouncement(true)" style="background:#FF6699;"><i class="fas fa-bullhorn"></i></button>
+    </div>
+
+    <!-- 设置侧边栏 -->
+    <div id="settingsOverlay" onclick="toggleSettings()" style="position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:999;" class="hidden"></div>
+    <div id="settingsSidebar" class="settings-sidebar">
+        <div class="settings-header">
+            <h3>设置</h3>
+            <button onclick="toggleSettings()" style="border:none; background:transparent; cursor:pointer;"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="settings-group">
+            <span class="settings-label">主题外观</span>
+            <button onclick="toggleTheme()" style="width:100%; padding:8px; background:var(--bg-bar); border:1px solid var(--border); border-radius:6px; cursor:pointer; color:var(--text-main);">
+                <i class="fas fa-adjust"></i> 切换模式
+            </button>
+        </div>
+        <div class="settings-group">
+            <span class="settings-label">文件命名格式</span>
+            <select id="filenameFormat" class="settings-select" onchange="saveSettings()">
+                <option value="title">仅标题</option>
+                <option value="title-author">标题 - UP主</option>
+                <option value="author-title">UP主 - 标题</option>
+            </select>
+        </div>
+        <div style="font-size:0.8rem; color:var(--text-gray); margin-top:auto;">v2.8.2 (Full Features)</div>
+    </div>
+
+    <!-- Login Modal -->
+    <div id="loginModal" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:200; display:flex; justify-content:center; align-items:center;">
+        <div style="background:rgba(255,255,255,0.95); padding:30px; border-radius:16px; width:350px; text-align:center; box-shadow:0 20px 60px rgba(0,0,0,0.3); backdrop-filter:blur(20px);">
+            <h3 style="margin-bottom:20px; color:var(--primary); font-size:1.3rem;">扫码登录</h3>
+            <div style="width:200px; height:200px; background:#fff; margin:0 auto; display:flex; align-items:center; justify-content:center; border-radius:12px; border:2px solid #eee;">
+                <img id="qrImg" src="" style="width:100%; height:100%; display:none; border-radius:10px;">
+                <span id="qrText" style="color:#666;">二维码加载中...</span>
+            </div>
+            <p style="margin-top:15px; font-size:0.9rem; color:#666;">请使用 Bilibili 客户端扫码</p>
+            <div style="margin-top:15px; display:flex; gap:10px; justify-content:center;">
+                <button onclick="refreshQRCode()" style="padding:10px 20px; border:none; background:var(--primary); color:white; border-radius:8px; cursor:pointer; font-size:0.9rem;">刷新二维码</button>
+                <button onclick="closeLoginModal()" style="padding:10px 20px; border:1px solid #ddd; background:#f5f5f5; border-radius:8px; cursor:pointer; color:#666; font-size:0.9rem;">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gist Announcement Modal -->
+    <div id="announcementModal" class="hidden modal">
+        <div class="modal-overlay" onclick="closeAnnouncement()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 style="color:white;"><i class="fas fa-bullhorn"></i> 公告</h3>
+                <button onclick="closeAnnouncement()" style="border:none; background:transparent; color:white; cursor:pointer;"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body" id="announcementContent">
+                加载中...
+            </div>
+            <div class="modal-footer">
+                <label class="dont-show-option">
+                    <input type="checkbox" id="dontShowTodayCheckbox">
+                    <span>今日不再自动弹出</span>
+                </label>
+                <button onclick="closeAnnouncement()" style="padding:6px 15px; background:var(--primary); color:white; border:none; border-radius:4px; cursor:pointer;">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/script.js"></script>
+</body>
+</html>
