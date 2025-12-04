@@ -669,7 +669,25 @@
         }
 
         /* 通用 */
-        .footer { text-align: center; padding: 30px; color: var(--text-gray); font-size: 0.85rem; }
+        .footer { 
+            text-align: center; 
+            padding: 30px; 
+            color: var(--text-gray); 
+            font-size: 0.85rem; 
+        }
+        
+        .footer-link {
+            color: var(--primary);
+            text-decoration: none;
+            cursor: pointer;
+            transition: color 0.2s;
+            font-size: 0.9rem;
+        }
+        
+        .footer-link:hover {
+            color: var(--primary-hover);
+            text-decoration: underline;
+        }
         .float-btns { position: fixed; bottom: 30px; right: 30px; display: flex; flex-direction: column; gap: 10px; z-index: 90; }
         .float-btn { width: 45px; height: 45px; border-radius: 50%; border: none; background: var(--blue); color: white; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.2); transition: 0.2s; font-size: 1.1rem; }
         .float-btn:hover { transform: scale(1.1); }
@@ -892,7 +910,18 @@
 
     </div>
 
-    <footer class="footer">b站解析助手@2025 &copy; 2025</footer>
+    <footer class="footer">
+        <div style="margin-bottom: 15px;">
+            <a href="javascript:void(0)" onclick="showAboutModal()" class="footer-link">关于我们</a>
+            <span style="margin: 0 15px; color: var(--text-gray);">|</span>
+            <a href="javascript:void(0)" onclick="showUsageModal()" class="footer-link">使用说明</a>
+            <span style="margin: 0 15px; color: var(--text-gray);">|</span>
+            <a href="javascript:void(0)" onclick="showFeedbackModal()" class="footer-link">建议反馈</a>
+        </div>
+        <div style="color: var(--text-gray); font-size: 0.85rem;">
+            b站解析助手@2025 &copy; 2025
+        </div>
+    </footer>
 
     <div class="float-btns">
         <button class="float-btn setting" onclick="toggleSettings()"><i class="fas fa-cog"></i></button>
@@ -956,6 +985,125 @@
                     <span>今日不再自动弹出</span>
                 </label>
                 <button onclick="closeAnnouncement()" style="padding:6px 15px; background:var(--primary); color:white; border:none; border-radius:4px; cursor:pointer;">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 关于我们 Modal -->
+    <div id="aboutModal" class="hidden modal">
+        <div class="modal-overlay" onclick="closeAboutModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 style="color:white;"><i class="fas fa-info-circle"></i> 关于我们</h3>
+                <button onclick="closeAboutModal()" style="border:none; background:transparent; color:white; cursor:pointer;"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <h4 style="color:var(--primary); margin-bottom:15px;">B站视频解析助手</h4>
+                <p style="line-height:1.8; color:var(--text-main); margin-bottom:15px;">
+                    一个功能完整的全栈视频解析下载工具，支持 B站、收藏夹、批量解析等功能。
+                </p>
+                <p style="line-height:1.8; color:var(--text-main); margin-bottom:15px;">
+                    <strong>主要功能：</strong><br>
+                    • 多链接解析（单个、批量、收藏夹、UP主投稿）<br>
+                    • 多格式下载（视音完整、分离、仅音频、纯画面、封面）<br>
+                    • 多画质支持（4K、1080P60、1080P+、1080P、720P 等）<br>
+                    • B站扫码登录、VIP 权限检测<br>
+                    • 现代化 UI（毛玻璃效果、主题切换、二次元背景）
+                </p>
+                <p style="line-height:1.8; color:var(--text-gray); font-size:0.9rem; margin-top:20px;">
+                    版本：v2.9.0<br>
+                    更新日期：2025年12月
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeAboutModal()" style="padding:6px 15px; background:var(--primary); color:white; border:none; border-radius:4px; cursor:pointer; margin:0 auto;">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 使用说明 Modal -->
+    <div id="usageModal" class="hidden modal">
+        <div class="modal-overlay" onclick="closeUsageModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 style="color:white;"><i class="fas fa-book"></i> 使用说明</h3>
+                <button onclick="closeUsageModal()" style="border:none; background:transparent; color:white; cursor:pointer;"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body" style="max-height:60vh; overflow-y:auto;">
+                <h4 style="color:var(--primary); margin-bottom:15px;">单链接解析</h4>
+                <p style="line-height:1.8; color:var(--text-main); margin-bottom:20px;">
+                    1. 在搜索框输入 B站视频链接或 BV 号<br>
+                    2. 选择下载类型：视音完整、视音分离、仅音频、纯画面、封面<br>
+                    3. 选择视频格式（MP4/FLV/MKV/WebM）和音频格式（MP3/FLAC/AAC/M4A）<br>
+                    4. 选择画质（4K/1080P60/1080P+/1080P/720P 等）<br>
+                    5. 点击"解析下载"
+                </p>
+                
+                <h4 style="color:var(--primary); margin-bottom:15px;">批量解析</h4>
+                <p style="line-height:1.8; color:var(--text-main); margin-bottom:20px;">
+                    1. 在搜索框输入多个链接（换行分隔）<br>
+                    2. 系统自动识别并批量解析<br>
+                    3. 点击"全部下载"或单独下载
+                </p>
+                
+                <h4 style="color:var(--primary); margin-bottom:15px;">收藏夹解析</h4>
+                <p style="line-height:1.8; color:var(--text-main); margin-bottom:20px;">
+                    1. 输入收藏夹链接或 ID<br>
+                    &nbsp;&nbsp;&nbsp;链接格式：https://space.bilibili.com/xxx/favlist?fid=xxx<br>
+                    &nbsp;&nbsp;&nbsp;或直接输入收藏夹 ID：1765119834<br>
+                    2. 系统自动解析收藏夹内所有视频<br>
+                    3. 批量下载
+                </p>
+                
+                <h4 style="color:var(--primary); margin-bottom:15px;">UP主投稿解析</h4>
+                <p style="line-height:1.8; color:var(--text-main); margin-bottom:20px;">
+                    1. 输入 UP主主页链接<br>
+                    &nbsp;&nbsp;&nbsp;格式：https://space.bilibili.com/522224434<br>
+                    2. 系统自动解析所有投稿视频<br>
+                    3. 批量下载
+                </p>
+                
+                <h4 style="color:var(--primary); margin-bottom:15px;">VIP 权限</h4>
+                <p style="line-height:1.8; color:var(--text-main); margin-bottom:20px;">
+                    部分画质需要大会员，请先登录 B站账号。登录后系统会自动检测 VIP 状态。
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeUsageModal()" style="padding:6px 15px; background:var(--primary); color:white; border:none; border-radius:4px; cursor:pointer; margin:0 auto;">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 建议反馈 Modal -->
+    <div id="feedbackModal" class="hidden modal">
+        <div class="modal-overlay" onclick="closeFeedbackModal()"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 style="color:white;"><i class="fas fa-comment-dots"></i> 建议反馈</h3>
+                <button onclick="closeFeedbackModal()" style="border:none; background:transparent; color:white; cursor:pointer;"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p style="line-height:1.8; color:var(--text-main); margin-bottom:20px;">
+                    感谢您的使用！如果您有任何建议或反馈，欢迎联系我们。
+                </p>
+                <div style="background:var(--bg-input); padding:20px; border-radius:8px; margin-bottom:20px;">
+                    <h4 style="color:var(--primary); margin-bottom:15px; font-size:1rem;">联系方式</h4>
+                    <p style="line-height:1.8; color:var(--text-main); margin-bottom:10px;">
+                        <strong>GitHub Issues：</strong><br>
+                        <a href="https://github.com/YiQing-House/bilibili-parser/issues" target="_blank" style="color:var(--primary); text-decoration:none;">
+                            https://github.com/YiQing-House/bilibili-parser/issues
+                        </a>
+                    </p>
+                    <p style="line-height:1.8; color:var(--text-gray); font-size:0.9rem; margin-top:15px;">
+                        <em>其他联系方式将在后续更新中添加...</em>
+                    </p>
+                </div>
+                <p style="line-height:1.8; color:var(--text-gray); font-size:0.85rem;">
+                    我们会认真对待每一条反馈，感谢您的支持！
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeFeedbackModal()" style="padding:6px 15px; background:var(--primary); color:white; border:none; border-radius:4px; cursor:pointer; margin:0 auto;">关闭</button>
             </div>
         </div>
     </div>

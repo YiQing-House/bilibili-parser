@@ -2737,15 +2737,28 @@ async function checkAnnouncement(forceShow = false) {
 
         try {
             const json = JSON.parse(content);
+            // 修复公告排版：移除重复的标题，只显示内容
+            let message = json.message || '';
+            // 如果消息包含 Markdown 标题，转换为 HTML
+            message = message.replace(/## 📢 最新更新\n\n/g, '<h4 style="color:var(--primary); margin-bottom:15px; font-size:1.1rem;">📢 最新更新</h4>');
+            message = message.replace(/## 📜 更新历史\n\n/g, '<h4 style="color:var(--primary); margin-top:20px; margin-bottom:15px; font-size:1.1rem;">📜 更新历史</h4>');
+            // 将换行转换为 <br>
+            message = message.replace(/\n/g, '<br>');
+            
             parsedContent = `
-                <h4 style="color:var(--primary); margin-bottom:10px; font-size:1.1rem;">${escapeHtml(json.title || '公告')}</h4>
-                <div style="line-height:1.6; font-size:0.95rem; color:var(--text-main);">${json.message || ''}</div>
+                <h4 style="color:var(--primary); margin-bottom:15px; font-size:1.1rem;">${escapeHtml(json.title || '公告')}</h4>
+                <div style="line-height:1.8; font-size:0.95rem; color:var(--text-main);">${message}</div>
                 <p style="margin-top:15px; font-size:0.8rem; color:var(--text-gray); text-align:right;">${escapeHtml(json.date || new Date().toLocaleDateString())}</p>
             `;
             if(json.isActive === false && !forceShow) return;
             versionId = json.id || content.length;
         } catch (e) {
-            parsedContent = `<div style="white-space: pre-wrap; line-height:1.6; color:var(--text-main); font-size:0.95rem;">${escapeHtml(content)}</div>`;
+            // 如果不是 JSON，直接显示文本内容
+            let textContent = escapeHtml(content);
+            textContent = textContent.replace(/## 📢 最新更新\n\n/g, '<h4 style="color:var(--primary); margin-bottom:15px; font-size:1.1rem;">📢 最新更新</h4>');
+            textContent = textContent.replace(/## 📜 更新历史\n\n/g, '<h4 style="color:var(--primary); margin-top:20px; margin-bottom:15px; font-size:1.1rem;">📜 更新历史</h4>');
+            textContent = textContent.replace(/\n/g, '<br>');
+            parsedContent = `<div style="white-space: pre-wrap; line-height:1.8; color:var(--text-main); font-size:0.95rem;">${textContent}</div>`;
             versionId = content.length;
         }
 
@@ -3403,3 +3416,36 @@ window.clearHistory = clearHistory;
 window.checkLogin = checkLogin;
 window.clearBatch = clearBatch;
 window.initUI = initUI;
+
+// 关于我们弹窗
+function showAboutModal() {
+    const modal = document.getElementById('aboutModal');
+    if (modal) modal.classList.remove('hidden');
+}
+
+function closeAboutModal() {
+    const modal = document.getElementById('aboutModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+// 使用说明弹窗
+function showUsageModal() {
+    const modal = document.getElementById('usageModal');
+    if (modal) modal.classList.remove('hidden');
+}
+
+function closeUsageModal() {
+    const modal = document.getElementById('usageModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+// 建议反馈弹窗
+function showFeedbackModal() {
+    const modal = document.getElementById('feedbackModal');
+    if (modal) modal.classList.remove('hidden');
+}
+
+function closeFeedbackModal() {
+    const modal = document.getElementById('feedbackModal');
+    if (modal) modal.classList.add('hidden');
+}
