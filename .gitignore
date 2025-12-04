@@ -53,9 +53,10 @@ test/
 *config.local*
 *secrets*
 
-# 文档文件（只保留 README.md）
+# 文档文件（保留重要文档）
 *.md
 !README.md
+!DEPLOY_GUIDE.md
 
 # 批处理文件和脚本
 # 开发者工具脚本（不提交）
