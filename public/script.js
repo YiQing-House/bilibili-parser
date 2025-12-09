@@ -286,8 +286,16 @@ function updatePresetInfoDisplay() {
     }
 }
 
+// 执行下载（HTML 按钮调用此函数）
+function executeDownload() {
+    console.log('🔴 executeDownload 被调用');
+    downloadWithPreset();
+}
+
 // 使用预设下载（单视频）
 async function downloadWithPreset() {
+    console.log('🔵 downloadWithPreset 开始执行');
+    console.log('🔵 currentVideoData:', currentVideoData);
     if (!currentVideoData) {
         showToast('请先处理视频', 'error');
         return;
@@ -348,12 +356,18 @@ async function downloadWithPreset() {
                 triggerBrowserDownload(audioDownloadUrl, `${finalName}_audio.m4a`);
             }, 1000);
         } else {
-            // 完整视频：传递命名格式给后端
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${qn}&nameFormat=${filenameFormat}`;
-            triggerBrowserDownload(downloadUrl, `${finalName}.mp4`);
+            // 完整视频：使用异步任务下载并显示进度
+            console.log('🔵 开始异步下载任务');
+            try {
+                await downloadWithAsyncTask(videoUrl, qn, filenameFormat, `${finalName}.mp4`);
+            } catch (downloadError) {
+                console.error('异步下载失败:', downloadError);
+                showToast(`下载失败: ${downloadError.message}`, 'error');
+            }
+            return; // 异步下载完成，直接返回
         }
 
-        showToast('下载已开始...', 'success');
+        showToast('下载请求已发送，请等待浏览器下载提示', 'success');
 
     } catch (error) {
         showToast('下载失败: ' + error.message, 'error');
@@ -367,15 +381,27 @@ async function downloadWithPreset() {
 
 // 触发浏览器下载（简单方式，无进度）
 function triggerBrowserDownload(url, filename) {
+    console.log('🔽 triggerBrowserDownload:', url, filename);
+
+    // 确保 URL 是完整的
+    const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+    console.log('🔽 完整下载 URL:', fullUrl);
+
+    // 方法1：使用 <a> 标签
     const link = document.createElement('a');
-    link.href = url;
+    link.href = fullUrl;
     link.download = filename;
     link.style.display = 'none';
+    link.target = '_blank'; // 添加新窗口打开作为备选
     document.body.appendChild(link);
     link.click();
+
     setTimeout(() => {
         document.body.removeChild(link);
-    }, 100);
+    }, 1000);
+
+    // 显示提示
+    showToast(`📥 正在下载: ${filename}`, 'info');
 }
 
 // ==================== 下载进度条功能 ====================
@@ -427,95 +453,395 @@ function hideDownloadProgress() {
 }
 
 // 取消下载
-let currentDownloadController = null;
-function cancelDownload() {
-    if (currentDownloadController) {
-        currentDownloadController.abort();
+let currentXHR = null;
+let downloadPollingTimer = null;
+let currentTaskId = null;
+
+// 下载任务列表
+const downloadTasks = new Map();
+
+// 取消下载（调用后端真正取消）
+async function cancelDownload(taskId = null) {
+    const targetTaskId = taskId || currentTaskId;
+
+    // 取消 XHR 请求
+    if (currentXHR) {
+        currentXHR.abort();
+        currentXHR = null;
     }
+    // 停止轮询
+    if (downloadPollingTimer) {
+        clearInterval(downloadPollingTimer);
+        downloadPollingTimer = null;
+    }
+
+    // 调用后端取消 API
+    if (targetTaskId) {
+        try {
+            console.log('取消下载任务:', targetTaskId);
+            await fetch(`${API_BASE_URL}/api/cancel-download/${targetTaskId}`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+        } catch (e) {
+            console.error('调用取消 API 失败:', e);
+        }
+
+        // 更新本地任务状态
+        const task = downloadTasks.get(targetTaskId);
+        if (task) {
+            task.status = 'cancelled';
+            task.stage = '已取消';
+            downloadTasks.set(targetTaskId, task);
+            renderDownloadList();
+        }
+    }
+
+    currentTaskId = null;
     hideDownloadProgress();
     showToast('下载已取消', 'warning');
 }
 
-// 带进度条的下载（使用 fetch API）
-async function downloadWithProgress(url, filename) {
+// 切换下载侧边栏显示
+function toggleDownloadSidebar() {
+    const sidebar = document.getElementById('downloadSidebar');
+    const overlay = document.getElementById('downloadOverlay');
+
+    if (!sidebar || !overlay) return;
+
+    const isHidden = sidebar.classList.contains('hidden');
+
+    if (isHidden) {
+        sidebar.classList.remove('hidden');
+        overlay.classList.add('active');
+    } else {
+        sidebar.classList.add('hidden');
+        overlay.classList.remove('active');
+    }
+}
+
+// 添加下载任务到列表
+function addDownloadTask(taskId, filename, url) {
+    downloadTasks.set(taskId, {
+        id: taskId,
+        filename: filename,
+        url: url,
+        status: 'starting',
+        stage: '准备中...',
+        percent: 0,
+        speed: '-- MB/s',
+        createdAt: Date.now()
+    });
+
+    renderDownloadList();
+    updateDownloadBadge();
+
+    // 自动打开侧边栏
+    const sidebar = document.getElementById('downloadSidebar');
+    if (sidebar && sidebar.classList.contains('hidden')) {
+        toggleDownloadSidebar();
+    }
+}
+
+// 更新下载任务进度
+function updateDownloadTask(taskId, data) {
+    const task = downloadTasks.get(taskId);
+    if (!task) return;
+
+    task.status = data.status || task.status;
+    task.stage = data.stage || task.stage;
+    task.percent = data.percent || task.percent;
+    task.speed = data.speed || task.speed;
+    task.downloadUrl = data.downloadUrl || task.downloadUrl;
+    task.fileName = data.fileName || task.fileName;
+
+    downloadTasks.set(taskId, task);
+    renderDownloadList();
+    updateDownloadBadge();
+}
+
+// 从列表移除任务
+function removeDownloadTask(taskId) {
+    downloadTasks.delete(taskId);
+    renderDownloadList();
+    updateDownloadBadge();
+}
+
+// 更新下载徽章
+function updateDownloadBadge() {
+    const badge = document.getElementById('downloadBadge');
+    if (!badge) return;
+
+    // 计算进行中的任务数
+    let activeCount = 0;
+    for (const [id, task] of downloadTasks) {
+        if (task.status !== 'completed' && task.status !== 'error' && task.status !== 'cancelled') {
+            activeCount++;
+        }
+    }
+
+    if (activeCount > 0) {
+        badge.textContent = activeCount;
+        badge.style.display = 'flex';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+// 获取阶段显示名称
+function getStageName(stage) {
+    const stageNames = {
+        'video': '📥 下载视频流',
+        'audio': '📥 下载音频流',
+        'merge': '🔄 合并音视频',
+        'complete': '✅ 已完成',
+        'completed': '✅ 已完成',
+        'error': '❌ 失败',
+        'cancelled': '⏹ 已取消',
+        'starting': '⏳ 准备中...'
+    };
+    return stageNames[stage] || stage;
+}
+
+// 渲染下载列表
+function renderDownloadList() {
+    const listContainer = document.getElementById('downloadList');
+    if (!listContainer) return;
+
+    // 如果没有任务，显示空状态
+    if (downloadTasks.size === 0) {
+        listContainer.innerHTML = `
+            <div class="download-empty">
+                <i class="fas fa-inbox"></i>
+                <p>暂无下载任务</p>
+            </div>
+        `;
+        return;
+    }
+
+    // 将任务按创建时间倒序排列
+    const sortedTasks = Array.from(downloadTasks.values()).sort((a, b) => b.createdAt - a.createdAt);
+
+    let html = '';
+    for (const task of sortedTasks) {
+        const statusClass = task.status === 'completed' ? 'completed' :
+            task.status === 'error' ? 'error' :
+                task.status === 'cancelled' ? 'cancelled' : '';
+
+        const showCancel = task.status !== 'completed' && task.status !== 'error' && task.status !== 'cancelled';
+        const showRetry = task.status === 'error';
+        const showClose = task.status === 'completed' || task.status === 'cancelled';
+
+        html += `
+            <div class="download-item ${statusClass}" data-task-id="${task.id}">
+                <div class="download-item-header">
+                    <div class="download-item-title">${escapeHtml(task.filename)}</div>
+                    ${showCancel ? `<button class="download-item-cancel" onclick="cancelDownload('${task.id}')"><i class="fas fa-times"></i></button>` : ''}
+                    ${showClose ? `<button class="download-item-cancel" onclick="removeDownloadTask('${task.id}')"><i class="fas fa-times"></i></button>` : ''}
+                </div>
+                <div class="download-item-progress">
+                    <div class="download-item-progress-fill" style="width: ${task.percent}%"></div>
+                </div>
+                <div class="download-item-info">
+                    <span class="download-item-stage">${getStageName(task.stage)}</span>
+                    <span class="download-item-percent">${task.percent}%</span>
+                </div>
+            </div>
+        `;
+    }
+
+    listContainer.innerHTML = html;
+}
+
+// HTML 转义
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// 带进度条的下载（使用 XMLHttpRequest，更可靠）
+function downloadWithProgress(url, filename) {
+    console.log('📥 downloadWithProgress 开始:', filename);
+    console.log('📥 URL:', url);
     showDownloadProgress();
+    console.log('📥 进度条已显示');
 
     // 更新文件名显示
     const progressFilename = document.getElementById('progressFilename');
     if (progressFilename) progressFilename.textContent = filename;
 
-    currentDownloadController = new AbortController();
     const startTime = Date.now();
+    let lastUpdate = Date.now();
+    let lastBytes = 0;
+
+    currentXHR = new XMLHttpRequest();
+    currentXHR.open('GET', url, true);
+    currentXHR.responseType = 'blob';
+    currentXHR.withCredentials = true;
+
+    // 进度事件
+    currentXHR.onprogress = function (event) {
+        const now = Date.now();
+        if (now - lastUpdate >= 200) {  // 每 200ms 更新一次
+            const downloadedBytes = event.loaded;
+            const totalBytes = event.total || event.loaded;
+            const downloadedMB = downloadedBytes / (1024 * 1024);
+            const totalMB = totalBytes / (1024 * 1024);
+            const percent = event.lengthComputable ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
+            const speedMBps = ((downloadedBytes - lastBytes) / ((now - lastUpdate) / 1000)) / (1024 * 1024);
+
+            updateDownloadProgress(percent, downloadedMB, totalMB, speedMBps);
+
+            lastUpdate = now;
+            lastBytes = downloadedBytes;
+        }
+    };
+
+    // 完成事件
+    currentXHR.onload = function () {
+        if (currentXHR.status === 200) {
+            const blob = currentXHR.response;
+            const blobUrl = URL.createObjectURL(blob);
+
+            // 触发保存
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(blobUrl);
+
+            hideDownloadProgress();
+
+            const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+            const finalSize = (blob.size / (1024 * 1024)).toFixed(2);
+            showToast(`✅ 下载完成: ${finalSize}MB (${totalTime}s)`, 'success');
+        } else {
+            hideDownloadProgress();
+            showToast('下载失败: HTTP ' + currentXHR.status, 'error');
+        }
+    };
+
+    // 错误事件
+    currentXHR.onerror = function () {
+        hideDownloadProgress();
+        showToast('下载失败: 网络错误', 'error');
+    };
+
+    // 取消事件
+    currentXHR.onabort = function () {
+        hideDownloadProgress();
+        console.log('下载已取消');
+    };
+
+    currentXHR.send();
+}
+
+// 使用异步任务下载（带进度轮询 + 侧边栏列表）
+async function downloadWithAsyncTask(url, qn, nameFormat, filename) {
+    console.log('📥 开始异步下载任务:', { url, qn, nameFormat, filename });
 
     try {
-        const response = await fetch(url, {
-            signal: currentDownloadController.signal,
-            credentials: 'include'
+        // 1. 创建下载任务
+        const response = await fetch(`${API_BASE_URL}/api/bilibili/download-task`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ url, qn, nameFormat, format: 'mp4' })
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            throw new Error('创建下载任务失败');
         }
 
-        const contentLength = response.headers.get('content-length');
-        const totalBytes = contentLength ? parseInt(contentLength, 10) : 0;
-        const totalMB = totalBytes / (1024 * 1024);
-
-        const reader = response.body.getReader();
-        const chunks = [];
-        let downloadedBytes = 0;
-        let lastUpdate = Date.now();
-        let lastBytes = 0;
-
-        while (true) {
-            const { done, value } = await reader.read();
-
-            if (done) break;
-
-            chunks.push(value);
-            downloadedBytes += value.length;
-
-            // 每 200ms 更新一次进度
-            const now = Date.now();
-            if (now - lastUpdate >= 200) {
-                const downloadedMB = downloadedBytes / (1024 * 1024);
-                const percent = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
-                const speedMBps = ((downloadedBytes - lastBytes) / ((now - lastUpdate) / 1000)) / (1024 * 1024);
-
-                updateDownloadProgress(percent, downloadedMB, totalMB || downloadedMB, speedMBps);
-
-                lastUpdate = now;
-                lastBytes = downloadedBytes;
-            }
+        const result = await response.json();
+        if (!result.success || !result.taskId) {
+            throw new Error(result.error || '创建下载任务失败');
         }
 
-        // 下载完成
-        const blob = new Blob(chunks);
-        const blobUrl = URL.createObjectURL(blob);
+        currentTaskId = result.taskId;
+        console.log('📋 下载任务已创建:', currentTaskId);
 
-        // 触发保存
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(blobUrl);
+        // 添加到下载列表
+        addDownloadTask(currentTaskId, filename, url);
 
-        hideDownloadProgress();
+        // 2. 开始轮询进度
+        return new Promise((resolve, reject) => {
+            downloadPollingTimer = setInterval(async () => {
+                try {
+                    const progressRes = await fetch(`${API_BASE_URL}/api/download-progress/${currentTaskId}`);
+                    const progressData = await progressRes.json();
 
-        const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-        const finalSize = (downloadedBytes / (1024 * 1024)).toFixed(2);
-        showToast(`✅ 下载完成: ${finalSize}MB (${totalTime}s)`, 'success');
+                    if (!progressData.success) {
+                        return;
+                    }
+
+                    const data = progressData.data;
+
+                    // 更新下载列表中的任务
+                    updateDownloadTask(currentTaskId, {
+                        status: data.status,
+                        stage: data.stage,
+                        percent: data.percent || 0,
+                        speed: data.speed || '-- MB/s',
+                        downloadUrl: data.downloadUrl,
+                        fileName: data.fileName
+                    });
+
+                    // 检查完成状态
+                    if (data.status === 'completed') {
+                        clearInterval(downloadPollingTimer);
+                        downloadPollingTimer = null;
+
+                        // 获取下载URL（优先从 data 获取，备选从任务对象获取）
+                        const downloadUrl = data.downloadUrl || downloadTasks.get(currentTaskId)?.downloadUrl;
+                        const fileName = data.fileName || downloadTasks.get(currentTaskId)?.fileName || filename;
+
+                        console.log('✅ 下载完成，downloadUrl:', downloadUrl, 'fileName:', fileName);
+
+                        // 触发浏览器下载
+                        if (downloadUrl) {
+                            showToast('✅ 视频处理完成，开始下载文件', 'success');
+                            triggerBrowserDownload(downloadUrl, fileName);
+                        } else {
+                            console.error('❌ 没有找到下载 URL，data:', data);
+                            showToast('❌ 下载失败：无法获取文件链接', 'error');
+                        }
+
+                        resolve(data);
+                    } else if (data.status === 'error') {
+                        clearInterval(downloadPollingTimer);
+                        downloadPollingTimer = null;
+                        reject(new Error(data.error || '下载失败'));
+                    } else if (data.status === 'cancelled') {
+                        clearInterval(downloadPollingTimer);
+                        downloadPollingTimer = null;
+                        reject(new Error('下载已取消'));
+                    }
+
+                } catch (pollError) {
+                    console.error('轮询进度失败:', pollError);
+                }
+            }, 500); // 每 500ms 轮询一次
+
+            // 设置超时（10分钟）
+            setTimeout(() => {
+                if (downloadPollingTimer) {
+                    clearInterval(downloadPollingTimer);
+                    downloadPollingTimer = null;
+                    updateDownloadTask(currentTaskId, { status: 'error', stage: '超时' });
+                    reject(new Error('下载超时'));
+                }
+            }, 10 * 60 * 1000);
+        });
 
     } catch (error) {
-        hideDownloadProgress();
-        if (error.name === 'AbortError') {
-            console.log('下载已取消');
-        } else {
-            console.error('下载失败:', error);
-            showToast('下载失败: ' + error.message, 'error');
+        if (currentTaskId) {
+            updateDownloadTask(currentTaskId, { status: 'error', stage: error.message });
         }
+        throw error;
     }
 }
 
@@ -2776,73 +3102,7 @@ function updateDownloadHint() {
     }
 }
 
-// 执行下载（新 HTML 使用）
-async function executeDownload() {
-    const data = currentData || currentVideoData;
-    if (!data) {
-        alert('请先处理视频');
-        return;
-    }
-
-    const videoUrl = videoUrlInput ? videoUrlInput.value.trim() : '';
-    if (!videoUrl) {
-        alert('请先输入视频链接');
-        return;
-    }
-
-    const title = (data.title || 'video').replace(/[<>:"/\\|?*]/g, '_');
-    const author = (data.author || 'UP主').replace(/[<>:"/\\|?*]/g, '_');
-    const encodedUrl = encodeURIComponent(videoUrl);
-    const qn = appState.quality || 80;
-    const maxQ = data.maxQuality || 80;
-    const videoFormat = appState.videoFormat || 'mp4';
-    const audioFormat = appState.audioFormat || 'mp3';
-
-    // 画质名称映射
-    const qNameMap = {
-        120: '4K', 116: '1080P高帧率', 112: '1080P高帧率', 80: '1080P', 64: '720P', 32: '480P', 16: '360P'
-    };
-    // 实际下载画质（如果预设高于最高画质则降级）
-    const actualQn = qn > maxQ ? maxQ : qn;
-    const qualityName = qNameMap[actualQn] || actualQn;
-
-    // 根据命名格式生成文件名（画质在第一位）
-    const filenameFormat = appState.filenameFormat || 'title';
-    let baseName;
-    switch (filenameFormat) {
-        case 'title-author':
-            baseName = `${title} - ${author}`;
-            break;
-        case 'author-title':
-            baseName = `${author} - ${title}`;
-            break;
-        default: // 'title'
-            baseName = title;
-    }
-    // 画质放在第一位
-    const finalName = `${qualityName}_${baseName}`;
-
-    try {
-        if (appState.format === 'cover') {
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/download/cover?url=${encodedUrl}`;
-            triggerBrowserDownload(downloadUrl, `${baseName}.jpg`);
-        } else if (appState.format === 'video+audio-separate') {
-            // 分离下载
-            const videoUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=video&format=${videoFormat}`;
-            triggerBrowserDownload(videoUrl_dl, `${finalName}_video.${videoFormat}`);
-            setTimeout(() => {
-                const audioUrl_dl = `${API_BASE_URL}/api/bilibili/stream?url=${encodedUrl}&qn=${qn}&type=audio&format=${audioFormat}`;
-                triggerBrowserDownload(audioUrl_dl, `${finalName}_audio.${audioFormat}`);
-            }, 1000);
-        } else {
-            // 完整视频：传递命名格式给后端
-            const downloadUrl = `${API_BASE_URL}/api/bilibili/download?url=${encodedUrl}&qn=${qn}&format=${videoFormat}&nameFormat=${filenameFormat}`;
-            triggerBrowserDownload(downloadUrl, `${finalName}.${videoFormat}`);
-        }
-    } catch (error) {
-        alert('下载失败: ' + error.message);
-    }
-}
+// 删除了重复的 executeDownload 函数，使用第289行的版本
 
 // 检查公告（新 HTML 使用）
 async function checkAnnouncement(forceShow = false) {

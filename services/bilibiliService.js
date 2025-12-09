@@ -31,6 +31,10 @@ class BilibiliService {
         this.wbiKeys = null;
         this.wbiKeysExpire = 0;
 
+        // 存储活动的下载任务（用于取消功能）
+        // key: taskId, value: { abortController, ffmpegProcess, tempFiles }
+        this.activeDownloads = new Map();
+
         // 通用请求头（模拟真实Chrome浏览器）
         this.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
@@ -1052,11 +1056,13 @@ class BilibiliService {
      * @param {object} cookies - 登录cookies
      * @param {object} res - Express响应对象
      * @param {string} format - 输出格式 (mp4, flv, mkv, webm)
+     * @param {string} nameFormat - 文件名格式
+     * @param {string} taskId - 任务ID（用于进度追踪）
      */
-    async downloadWithQuality(url, qn = 80, cookies = null, res, format = 'mp4', nameFormat = 'title') {
+    async downloadWithQuality(url, qn = 80, cookies = null, res, format = 'mp4', nameFormat = 'title', taskId = null) {
         try {
             const finalUrl = this.sanitizeBiliUrl(await this.resolveShortUrl(url));
-            console.log('开始下载 B站视频:', { url: finalUrl, qn, nameFormat, hasLogin: !!cookies });
+            console.log('开始下载 B站视频:', { url: finalUrl, qn, nameFormat, hasLogin: !!cookies, taskId });
 
             // 检查响应头是否已发送（防止重复设置）
             if (res.headersSent) {
@@ -1154,12 +1160,12 @@ class BilibiliService {
 
             // 下载视频流
             console.log('⬇️ 开始下载视频流...');
-            await this.downloadFile(videoUrl, videoFile, '视频流');
+            await this.downloadFile(videoUrl, videoFile, '视频流', taskId, 'video');
 
             if (audioUrl) {
                 // 下载音频流
                 console.log('⬇️ 开始下载音频流...');
-                await this.downloadFile(audioUrl, audioFile, '音频流');
+                await this.downloadFile(audioUrl, audioFile, '音频流', taskId, 'audio');
 
                 // 检查 ffmpeg 并合并
                 const hasFfmpeg = await this.checkFfmpeg();
@@ -1167,7 +1173,28 @@ class BilibiliService {
 
                 if (hasFfmpeg) {
                     console.log(`合并音视频并转换为 ${format} 格式...`);
-                    await this.mergeVideoAudio(videoFile, audioFile, outputFile, format);
+
+                    // 报告合并阶段开始
+                    if (taskId && typeof global.updateDownloadProgress === 'function') {
+                        global.updateDownloadProgress(taskId, {
+                            stage: 'merge',
+                            percent: 0,
+                            status: 'merging',
+                            message: '正在合并音视频...'
+                        });
+                    }
+
+                    await this.mergeVideoAudio(videoFile, audioFile, outputFile, format, taskId);
+
+                    // 报告合并完成
+                    if (taskId && typeof global.updateDownloadProgress === 'function') {
+                        global.updateDownloadProgress(taskId, {
+                            stage: 'merge',
+                            percent: 100,
+                            status: 'complete',
+                            message: '下载完成'
+                        });
+                    }
 
                     // 清理临时文件
                     try {
@@ -1247,6 +1274,179 @@ class BilibiliService {
 
         } catch (error) {
             console.error('B站下载失败:', error);
+            // 报告下载失败
+            if (taskId && typeof global.updateDownloadProgress === 'function') {
+                global.updateDownloadProgress(taskId, {
+                    status: 'error',
+                    stage: 'error',
+                    percent: 0,
+                    error: error.message
+                });
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * 异步下载（不通过 res 直接响应，而是保存到临时文件）
+     * 用于 /api/bilibili/download-task 接口
+     * @param {string} url - 视频URL
+     * @param {number} qn - 画质
+     * @param {object} cookies - 登录cookies
+     * @param {string} format - 输出格式
+     * @param {string} nameFormat - 文件名格式
+     * @param {string} taskId - 任务ID
+     * @returns {Promise<string>} 下载完成的文件路径
+     */
+    async downloadWithQualityAsync(url, qn = 80, cookies = null, format = 'mp4', nameFormat = 'title', taskId = null) {
+        try {
+            const finalUrl = this.sanitizeBiliUrl(await this.resolveShortUrl(url));
+            console.log('开始异步下载 B站视频:', { url: finalUrl, qn, nameFormat, hasLogin: !!cookies, taskId });
+
+            // 获取视频信息
+            const videoInfo = await this.getVideoInfo(finalUrl, cookies);
+            const bvid = videoInfo.bvid;
+            const cid = videoInfo.pages?.[0]?.cid || videoInfo.cid;
+
+            if (!cid) {
+                throw new Error('无法获取视频 CID');
+            }
+
+            // 获取播放地址
+            let playData = null;
+            if (cookies) {
+                playData = await this.getPlayUrl(bvid, cid, qn, cookies);
+            }
+            if (!playData) {
+                playData = await this.getPlayUrlByHtml5(bvid, cid, qn, cookies);
+            }
+            if (!playData) {
+                playData = await this.getPlayUrlByApp(bvid, cid, qn);
+            }
+
+            if (!playData || !playData.dash) {
+                throw new Error('无法获取视频流信息');
+            }
+
+            const { video: videos, audio: audios } = playData.dash;
+
+            // 选择对应画质的视频流
+            let selectedVideo = videos.find(v => v.id === qn);
+            if (!selectedVideo) {
+                if (qn === 116 || qn === 112) {
+                    const altQn = qn === 116 ? 112 : 116;
+                    selectedVideo = videos.find(v => v.id === altQn);
+                }
+                if (!selectedVideo) {
+                    const lowerQualities = videos.filter(v => v.id <= qn);
+                    if (lowerQualities.length > 0) {
+                        selectedVideo = lowerQualities.reduce((prev, curr) => curr.id > prev.id ? curr : prev);
+                    } else {
+                        selectedVideo = videos.reduce((prev, curr) => curr.id > prev.id ? curr : prev);
+                    }
+                }
+            }
+
+            const selectedAudio = audios && audios.length > 0 ? audios[0] : null;
+            const videoUrl = selectedVideo.baseUrl || selectedVideo.base_url;
+            const audioUrl = selectedAudio ? (selectedAudio.baseUrl || selectedAudio.base_url) : null;
+
+            // 生成文件名
+            const actualQn = selectedVideo.id;
+            const qualityName = this.getQualityName(actualQn).replace(/\s+/g, '');
+            const timestamp = Date.now();
+            const title = (videoInfo.title || 'video').replace(/[<>:"/\\|?*]/g, '_').substring(0, 50);
+            const author = (videoInfo.owner?.name || 'UP主').replace(/[<>:"/\\|?*]/g, '_').substring(0, 20);
+
+            let baseName;
+            switch (nameFormat) {
+                case 'title-author':
+                    baseName = `${title} - ${author}`;
+                    break;
+                case 'author-title':
+                    baseName = `${author} - ${title}`;
+                    break;
+                default:
+                    baseName = title;
+            }
+            const finalTitle = `${qualityName}_${baseName}`;
+            const videoFile = path.join(this.downloadDir, `${timestamp}_video.m4s`);
+            const audioFile = path.join(this.downloadDir, `${timestamp}_audio.m4s`);
+            const outputFile = path.join(this.downloadDir, `${finalTitle}.${format}`);
+
+            // 下载视频流
+            console.log('⬇️ 开始下载视频流...');
+            await this.downloadFile(videoUrl, videoFile, '视频流', taskId, 'video');
+
+            if (audioUrl) {
+                // 下载音频流
+                console.log('⬇️ 开始下载音频流...');
+                await this.downloadFile(audioUrl, audioFile, '音频流', taskId, 'audio');
+
+                // 合并
+                const hasFfmpeg = await this.checkFfmpeg();
+                if (hasFfmpeg) {
+                    console.log(`合并音视频并转换为 ${format} 格式...`);
+
+                    if (taskId && typeof global.updateDownloadProgress === 'function') {
+                        global.updateDownloadProgress(taskId, {
+                            stage: 'merge',
+                            percent: 0,
+                            status: 'merging',
+                            message: '正在合并音视频...'
+                        });
+                    }
+
+                    await this.mergeVideoAudio(videoFile, audioFile, outputFile, format, taskId);
+
+                    // 清理临时文件
+                    try {
+                        fs.unlinkSync(videoFile);
+                        fs.unlinkSync(audioFile);
+                    } catch (e) { }
+
+                    // 报告完成，返回下载链接
+                    if (taskId && typeof global.updateDownloadProgress === 'function') {
+                        global.updateDownloadProgress(taskId, {
+                            stage: 'complete',
+                            percent: 100,
+                            status: 'completed',
+                            message: '下载完成',
+                            filePath: outputFile,
+                            fileName: `${finalTitle}.${format}`,
+                            downloadUrl: `/api/download-file/${encodeURIComponent(path.basename(outputFile))}`
+                        });
+                    }
+
+                    return outputFile;
+                }
+            }
+
+            // 没有音频或没有 ffmpeg
+            if (taskId && typeof global.updateDownloadProgress === 'function') {
+                global.updateDownloadProgress(taskId, {
+                    stage: 'complete',
+                    percent: 100,
+                    status: 'completed',
+                    message: '下载完成（仅视频）',
+                    filePath: videoFile,
+                    fileName: `${finalTitle}.mp4`,
+                    downloadUrl: `/api/download-file/${encodeURIComponent(path.basename(videoFile))}`
+                });
+            }
+
+            return videoFile;
+
+        } catch (error) {
+            console.error('异步下载失败:', error);
+            if (taskId && typeof global.updateDownloadProgress === 'function') {
+                global.updateDownloadProgress(taskId, {
+                    status: 'error',
+                    stage: 'error',
+                    percent: 0,
+                    error: error.message
+                });
+            }
             throw error;
         }
     }
@@ -1303,15 +1503,32 @@ class BilibiliService {
     }
 
     /**
-     * 下载文件（带进度显示）
+     * 下载文件（带进度显示和取消支持）
+     * @param {string} url - 下载地址
+     * @param {string} outputPath - 输出路径
+     * @param {string} label - 进度标签
+     * @param {string} taskId - 任务ID（用于向前端报告进度）
+     * @param {string} stage - 当前阶段（video/audio/merge）
      */
-    async downloadFile(url, outputPath, label = '下载中') {
+    async downloadFile(url, outputPath, label = '下载中', taskId = null, stage = null) {
+        // 创建 AbortController 用于取消下载
+        const abortController = new AbortController();
+
+        // 如果有 taskId，存储到 activeDownloads 以便取消
+        if (taskId) {
+            const existing = this.activeDownloads.get(taskId) || { tempFiles: [] };
+            existing.abortController = abortController;
+            existing.tempFiles.push(outputPath);
+            this.activeDownloads.set(taskId, existing);
+        }
+
         const response = await axios({
             method: 'GET',
             url: url,
             responseType: 'stream',
             timeout: 300000,
-            headers: this.headers
+            headers: this.headers,
+            signal: abortController.signal
         });
 
         const writer = fs.createWriteStream(outputPath);
@@ -1332,13 +1549,27 @@ class BilibiliService {
                 const speed = ((downloadedSize - lastDownloadedSize) / ((now - lastLogTime) / 1000) / 1024 / 1024).toFixed(2);
                 const downloadedMB = (downloadedSize / 1024 / 1024).toFixed(2);
 
+                let percent = 0;
+                let totalMB = '?';
                 if (totalSize > 0) {
-                    const percent = Math.round((downloadedSize / totalSize) * 100);
-                    const totalMB = (totalSize / 1024 / 1024).toFixed(2);
+                    percent = Math.round((downloadedSize / totalSize) * 100);
+                    totalMB = (totalSize / 1024 / 1024).toFixed(2);
                     // 使用 \r 让进度条在同一行更新
                     process.stdout.write(`\r📥 ${label}: ${percent}% | ${downloadedMB}/${totalMB}MB | ${speed}MB/s    `);
                 } else {
                     process.stdout.write(`\r📥 ${label}: ${downloadedMB}MB | ${speed}MB/s    `);
+                }
+
+                // 向前端报告进度（如果提供了 taskId）
+                if (taskId && typeof global.updateDownloadProgress === 'function') {
+                    global.updateDownloadProgress(taskId, {
+                        stage: stage || label,
+                        percent: percent,
+                        downloadedMB: downloadedMB,
+                        totalMB: totalMB,
+                        speed: speed + ' MB/s',
+                        status: 'downloading'
+                    });
                 }
 
                 lastLogTime = now;
@@ -1352,9 +1583,33 @@ class BilibiliService {
             writer.on('finish', () => {
                 const finalMB = (downloadedSize / 1024 / 1024).toFixed(2);
                 console.log(`\r✅ ${label}完成: ${finalMB}MB                    `);
+
+                // 报告该阶段完成
+                if (taskId && typeof global.updateDownloadProgress === 'function') {
+                    global.updateDownloadProgress(taskId, {
+                        stage: stage || label,
+                        percent: 100,
+                        downloadedMB: finalMB,
+                        totalMB: finalMB,
+                        speed: '0 MB/s',
+                        status: 'stage_complete'
+                    });
+                }
+
                 resolve(outputPath);
             });
-            writer.on('error', reject);
+            writer.on('error', (err) => {
+                // 取消时关闭写入流
+                writer.close();
+                reject(err);
+            });
+
+            // 监听取消信号
+            abortController.signal.addEventListener('abort', () => {
+                response.data.destroy();
+                writer.close();
+                reject(new Error('下载已取消'));
+            });
         });
     }
 
@@ -1376,8 +1631,9 @@ class BilibiliService {
      * @param {string} audioPath - 音频文件路径
      * @param {string} outputPath - 输出文件路径
      * @param {string} format - 输出格式 (mp4, flv, mkv, webm)
+     * @param {string} taskId - 任务ID（用于取消功能）
      */
-    async mergeVideoAudio(videoPath, audioPath, outputPath, format = 'mp4') {
+    async mergeVideoAudio(videoPath, audioPath, outputPath, format = 'mp4', taskId = null) {
         return new Promise((resolve, reject) => {
             // 根据格式选择编码器
             const formatConfig = this.getFormatConfig(format);
@@ -1395,6 +1651,14 @@ class BilibiliService {
                 stdio: ['ignore', 'pipe', 'pipe']
             });
 
+            // 存储 ffmpeg 进程引用以便取消
+            if (taskId) {
+                const existing = this.activeDownloads.get(taskId) || { tempFiles: [] };
+                existing.ffmpegProcess = ffmpeg;
+                existing.tempFiles.push(outputPath);
+                this.activeDownloads.set(taskId, existing);
+            }
+
             let stderr = '';
             ffmpeg.stderr.on('data', (data) => {
                 stderr += data.toString();
@@ -1403,6 +1667,9 @@ class BilibiliService {
             ffmpeg.on('close', (code) => {
                 if (code === 0) {
                     resolve(outputPath);
+                } else if (code === null) {
+                    // 被终止（取消）
+                    reject(new Error('合并已取消'));
                 } else {
                     reject(new Error(`ffmpeg 合并失败: ${stderr}`));
                 }
@@ -1412,6 +1679,70 @@ class BilibiliService {
                 reject(new Error(`启动 ffmpeg 失败: ${error.message}`));
             });
         });
+    }
+
+    /**
+     * 取消下载任务
+     * @param {string} taskId - 任务ID
+     * @returns {boolean} 是否成功取消
+     */
+    cancelDownload(taskId) {
+        const task = this.activeDownloads.get(taskId);
+        if (!task) {
+            console.log(`取消下载: 任务 ${taskId} 不存在或已完成`);
+            return false;
+        }
+
+        console.log(`取消下载任务: ${taskId}`);
+
+        // 1. 中止 axios 下载
+        if (task.abortController) {
+            try {
+                task.abortController.abort();
+                console.log('已中止 axios 下载流');
+            } catch (e) {
+                console.error('中止 axios 失败:', e.message);
+            }
+        }
+
+        // 2. 终止 ffmpeg 进程
+        if (task.ffmpegProcess && !task.ffmpegProcess.killed) {
+            try {
+                task.ffmpegProcess.kill('SIGKILL');
+                console.log('已终止 ffmpeg 进程');
+            } catch (e) {
+                console.error('终止 ffmpeg 失败:', e.message);
+            }
+        }
+
+        // 3. 清理临时文件
+        if (task.tempFiles && task.tempFiles.length > 0) {
+            for (const file of task.tempFiles) {
+                try {
+                    if (fs.existsSync(file)) {
+                        fs.unlinkSync(file);
+                        console.log('已删除临时文件:', file);
+                    }
+                } catch (e) {
+                    console.error('删除临时文件失败:', e.message);
+                }
+            }
+        }
+
+        // 4. 更新进度状态
+        if (typeof global.updateDownloadProgress === 'function') {
+            global.updateDownloadProgress(taskId, {
+                status: 'cancelled',
+                stage: 'cancelled',
+                percent: 0,
+                message: '下载已取消'
+            });
+        }
+
+        // 5. 从活动下载列表中移除
+        this.activeDownloads.delete(taskId);
+
+        return true;
     }
 
     /**
