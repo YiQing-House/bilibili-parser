@@ -243,7 +243,14 @@
             letter-spacing: 1px;
         }
 
+        .user-area {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
         .user-area button {
+
             background: var(--primary);
             color: white;
             border: none;
@@ -256,6 +263,25 @@
 
         .user-area button:hover {
             opacity: 0.9;
+        }
+
+        .header-link-btn {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: linear-gradient(135deg, #5BA3C0 0%, #4A90B0 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+            margin-right: 10px;
+        }
+
+        .header-link-btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
         }
 
         .user-info-display {
@@ -1529,6 +1555,9 @@
         <div class="header-inner">
             <a href="#" class="logo"><i class="fas fa-video"></i> <span>视频去水印助手@2025</span></a>
             <div class="user-area">
+                <a href="https://video.qhouse.asia/" target="_blank" class="header-link-btn" title="其他平台短视频工具">
+                    <i class="fas fa-globe"></i> 其他平台
+                </a>
                 <div id="loginBtnArea">
                     <button onclick="showLoginModal()">登录网站</button>
                 </div>
@@ -1540,6 +1569,7 @@
                         style="cursor:pointer; color:var(--text-gray); margin-left:8px;" title="退出登录"></i>
                 </div>
             </div>
+
         </div>
     </header>
 
@@ -1959,14 +1989,6 @@
 
     <!-- 下载侧边栏遮罩 -->
     <div id="downloadOverlay" class="download-overlay" onclick="toggleDownloadSidebar()"></div>
-
-    <!-- 右下角浮动控件 -->
-    <div class="float-buttons-group">
-        <a href="https://video.qhouse.asia/" target="_blank" class="float-link-btn" title="其他平台短视频工具">
-            <i class="fas fa-globe"></i>
-            <span class="float-link-text">其他平台</span>
-        </a>
-    </div>
 
     <script src="/script.js?v=1765289500"></script>
 
