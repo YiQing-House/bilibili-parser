@@ -3177,6 +3177,61 @@ body.light-theme .download-progress-modal {
     }
 }
 
+/* 浮动链接按钮 */
+.float-link-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 18px;
+    background: linear-gradient(135deg, var(--bilibili-pink) 0%, #e91e63 100%);
+    color: white;
+    text-decoration: none;
+    border-radius: 25px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    box-shadow: 0 4px 15px rgba(251, 114, 153, 0.4);
+    transition: all 0.3s;
+    white-space: nowrap;
+}
+
+.float-link-btn:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(251, 114, 153, 0.5);
+}
+
+.float-link-btn i {
+    font-size: 1.1rem;
+}
+
+.float-link-text {
+    font-size: 0.85rem;
+}
+
+@media (max-width: 768px) {
+    .float-link-btn {
+        padding: 10px 14px;
+        font-size: 0.85rem;
+    }
+
+    .float-link-text {
+        font-size: 0.8rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .float-link-btn {
+        padding: 10px;
+        border-radius: 50%;
+        width: 48px;
+        height: 48px;
+        justify-content: center;
+    }
+
+    .float-link-text {
+        display: none;
+    }
+}
+
 /* 浅色主题适配 */
 body.light-theme .download-sidebar {
     background: rgba(255, 255, 255, 0.95);
