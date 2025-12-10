@@ -3208,3 +3208,127 @@ body.light-theme .download-overlay {
         font-size: 1.2rem;
     }
 }
+
+/* ============================================================
+   移动端增强优化 (H5 适配)
+   ============================================================ */
+@media (max-width: 480px) {
+
+    /* 减小页面边距 */
+    body {
+        padding: 10px;
+    }
+
+    /* 主内容区域 */
+    .main-content {
+        padding: 15px;
+    }
+
+    /* 输入框优化 */
+    .input-wrapper {
+        padding: 8px;
+        flex-wrap: wrap;
+    }
+
+    .url-input {
+        width: 100%;
+        order: 1;
+        padding: 10px 5px;
+    }
+
+    .input-icon {
+        padding: 0 10px;
+    }
+
+    .parse-btn {
+        width: 100%;
+        order: 2;
+        margin-top: 8px;
+        justify-content: center;
+    }
+
+    /* 视频信息卡片 */
+    .video-container {
+        grid-template-columns: 1fr;
+        padding: 15px;
+        gap: 15px;
+    }
+
+    .video-title {
+        font-size: 1.1rem;
+    }
+
+    /* 预设面板 */
+    .preset-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+    }
+
+    .preset-item {
+        padding: 8px 6px;
+        font-size: 0.8rem;
+    }
+
+    /* 下载按钮和下拉框间距 */
+    .download-main-btn {
+        padding: 12px 20px;
+        font-size: 1rem;
+    }
+
+    .download-section {
+        padding: 15px;
+    }
+
+    /* 底部链接间距优化 */
+    .footer-link {
+        padding: 8px 12px !important;
+        margin: 0 5px;
+    }
+
+    /* 头部优化 */
+    .header {
+        padding: 20px 15px;
+    }
+
+    .logo h1 {
+        font-size: 1.3rem;
+    }
+
+    .logo i {
+        font-size: 1.5rem;
+    }
+
+    /* 登录按钮 */
+    .login-btn {
+        padding: 6px 12px;
+        font-size: 0.85rem;
+    }
+
+    /* 弹窗优化 */
+    .modal-content {
+        width: 95%;
+        max-width: 95%;
+        margin: 10px;
+    }
+
+    .modal-body {
+        padding: 15px;
+    }
+}
+
+/* 超小屏幕适配 */
+@media (max-width: 375px) {
+    .logo h1 {
+        font-size: 1.1rem;
+    }
+
+    .preset-item {
+        font-size: 0.75rem;
+        padding: 6px 4px;
+    }
+
+    .parse-btn {
+        font-size: 0.9rem;
+        padding: 10px 15px;
+    }
+}
