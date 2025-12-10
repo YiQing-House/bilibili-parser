@@ -255,7 +255,7 @@ GET /api/bilibili/user-videos?uid=522224434
 
 ## 📄 许可证
 
-MIT License
+[MIT License](./LICENSE)
 
 ---
 
